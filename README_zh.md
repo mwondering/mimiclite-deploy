@@ -63,6 +63,7 @@ uv run sim2real/rl_policy/tracking.py \
 | Humanoid-GPT | `checkpoints/humanoid-gpt/policy.yaml` | Humanoid-GPT policy wrapper。 |
 | HEFT | `checkpoints/heft` | PMG 和 compliance 两个版本。 |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | TWIST2 policy wrapper。 |
+| SP-Tracking SPV5-2（0728 / 22000） | `checkpoints/sp-tracking/0728_baoshou_waist_dataclean_changedr/policy.yaml` | 包含部署 ONNX；[sim2sim 与 G1 启动说明](docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/tutorials/sp-tracking-0728.md)。 |
 
 ![统一的跨代码库动作跟踪评测](assets/mimic_lite_cross_codebase_tracking_eval.png)
 
@@ -74,9 +75,9 @@ root XY 位移为 1.5--3.0 m。
 其定义为最远 future reference frame 对应的时间。所有数值均采用统一的
 50 Hz reference-motion contract。
 
-| Policy | MimicLite | BFM-Zero | ScaleBFM | SONIC release | SONIC low-latency | HoloMotion | TeleopIT | Humanoid-GPT | HEFT | TWIST2 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Motion-lookahead latency | 0.08 s | 0.12 s | 0.10 s | 0.90 s | 0.18 s | 0.20 s | 0.00 s | 0.02 s | 0.12 s | 0.00 s |
+| Policy | MimicLite | BFM-Zero | ScaleBFM | SONIC release | SONIC low-latency | HoloMotion | TeleopIT | Humanoid-GPT | HEFT | TWIST2 | SPV5-2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Motion-lookahead latency | 0.08 s | 0.12 s | 0.10 s | 0.90 s | 0.18 s | 0.20 s | 0.00 s | 0.02 s | 0.12 s | 0.00 s | 0.14 s |
 
 ## 真机环境
 

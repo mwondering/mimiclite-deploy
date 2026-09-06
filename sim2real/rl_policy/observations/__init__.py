@@ -8,6 +8,7 @@ from .humanoid_gpt import *
 from .motion import *
 from .mimic_lite import *
 from .scalebfm import *
+from .sp_tracking import *
 from .sonic import *
 from .teleopit import *
 from .twist2 import *

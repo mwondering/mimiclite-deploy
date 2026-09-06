@@ -206,6 +206,11 @@ class BasePolicy:
         raise ValueError(f"Unsupported controller_type: {controller_type}")
 
     def setup_policy(self, model_path):
+        clip_actions = self.policy_config.get("clip_actions")
+        if clip_actions is not None:
+            clip_actions = float(clip_actions)
+            if not np.isfinite(clip_actions) or clip_actions <= 0:
+                raise ValueError("clip_actions must be finite and positive")
         runtime_module = build_inference_module(model_path, self.inference_backend)
         runtime_label = self.inference_backend
         if self.inference_backend == "tensorrt":
@@ -220,6 +225,8 @@ class BasePolicy:
         def policy(input_dict):
             output_dict = runtime_module(input_dict)
             action = np.asarray(output_dict["action"], dtype=np.float32)
+            if clip_actions is not None:
+                action = np.clip(action, -clip_actions, clip_actions)
             next_state_dict = {
                 k[1]: v
                 for k, v in output_dict.items()

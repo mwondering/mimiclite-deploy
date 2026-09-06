@@ -35,6 +35,7 @@ value.
 | SONIC low-latency SMPL | `checkpoints/sonic/low_latency/smpl/policy.yaml` | Four-frame SMPL input horizon. |
 | HoloMotion v1.4.0 | `checkpoints/holomotion/v1_4_0/policy.yaml` | Requires the official 1.64 GB ONNX artifact. |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | Normal G1 motion stream. |
+| SP-Tracking SPV5-2 | `checkpoints/sp-tracking/spv5_2/policy.yaml` | Generated locally from an SPV5-2 export; normal G1 motion stream. |
 
 ```bash
 uv run sim2real/rl_policy/tracking.py \
@@ -51,6 +52,34 @@ standard any4hdmi / SONIC G1 motion policies.
 ## Policy-Specific Runtime Requirements
 
 Some adapted policies need a different motion source or extra runtime asset.
+
+### SP-Tracking SPV5-2
+
+For the included **0728 / 22000** checkpoint, use the dedicated
+[sim2sim and G1 deployment guide](sp-tracking-0728.md).
+
+Adapt a source export directory containing matching
+`policy_<iteration>.onnx`, `policy_<iteration>.json`, and
+`checkpoint_<iteration>.pt` files:
+
+```bash
+uv run scripts/adapt_sp_tracking_spv5_2.py \
+  --checkpoint-dir /path/to/sp_tracking/ckpts/run_name \
+  --iteration 22000
+```
+
+The adapter writes `policy.onnx`, `policy.json`, `policy.yaml`, and a README to
+`checkpoints/sp-tracking/spv5_2/`. It keeps every learned node and weight unchanged
+and replaces only the original flat 8199-D input with four semantic inputs. CPU
+ONNX Runtime equivalence checks are enabled by default. The runtime observation
+implementation reproduces the 50-step estimator history, 50-frame reference
+window (`-42..7`), and 13-key-body feature contract without changing existing
+observation groups. The furthest future reference is seven 50 Hz frames, so the
+policy's motion-lookahead latency is 0.14 s.
+
+The source PyTorch checkpoint is checked for a matching iteration but is not
+copied into the runtime artifact. This keeps training state separate from the
+deploy checkpoint.
 
 ### HoloMotion v1.4.0
 

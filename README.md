@@ -65,6 +65,7 @@ Currently supported adapted / distributed checkpoint families:
 | Humanoid-GPT | `checkpoints/humanoid-gpt/policy.yaml` | Humanoid-GPT policy wrapper. |
 | HEFT | `checkpoints/heft` | PMG and compliance variants. |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | TWIST2 policy wrapper. |
+| SP-Tracking SPV5-2 (0728 / 22000) | `checkpoints/sp-tracking/0728_baoshou_waist_dataclean_changedr/policy.yaml` | Includes the deploy ONNX; [sim2sim and G1 commands](docs/tutorials/sp-tracking-0728.md). |
 
 ![Unified cross-codebase tracking evaluation](assets/mimic_lite_cross_codebase_tracking_eval.png)
 
@@ -72,9 +73,9 @@ For a fair comparison, we report the motion-lookahead latency required by each
 policy, defined by its furthest required future-reference frame. All values use
 the shared 50 Hz reference-motion contract.
 
-| Policy | Mimic-Lite v1.1 | Mimic-Lite Huge | Mimic-Lite Base | Mimic-Lite Huge ROA | Mimic-Lite Small | ScaleBFM M | ScaleBFM XL | SONIC | SONIC low-latency | SONIC v1.1 | HoloMotion | HEFT | TeleopIT | Humanoid-GPT | BFM-Zero | TWIST2 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Motion-lookahead latency | 0.08 s | 0.08 s | 0.08 s | 0.08 s | 0.08 s | 0.10 s | 0.10 s | 0.90 s | 0.18 s | 0.90 s | 0.20 s | 0.12 s | 0.00 s | 0.02 s | 0.12 s | 0.00 s |
+| Policy | Mimic-Lite v1.1 | Mimic-Lite Huge | Mimic-Lite Base | Mimic-Lite Huge ROA | Mimic-Lite Small | ScaleBFM M | ScaleBFM XL | SONIC | SONIC low-latency | SONIC v1.1 | HoloMotion | HEFT | TeleopIT | Humanoid-GPT | BFM-Zero | TWIST2 | SPV5-2 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Motion-lookahead latency | 0.08 s | 0.08 s | 0.08 s | 0.08 s | 0.08 s | 0.10 s | 0.10 s | 0.90 s | 0.18 s | 0.90 s | 0.20 s | 0.12 s | 0.00 s | 0.02 s | 0.12 s | 0.00 s | 0.14 s |
 
 ## Real-robot Environments
 

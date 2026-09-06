@@ -33,6 +33,7 @@ policy YAML。
 | SONIC low-latency SMPL | `checkpoints/sonic/low_latency/smpl/policy.yaml` | 使用四帧 SMPL 输入窗口。 |
 | HoloMotion v1.4.0 | `checkpoints/holomotion/v1_4_0/policy.yaml` | 需要官方 1.64 GB ONNX artifact。 |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | 正常 G1 motion stream。 |
+| SP-Tracking SPV5-2 | `checkpoints/sp-tracking/spv5_2/policy.yaml` | 从 SPV5-2 export 在本地生成；使用正常 G1 motion stream。 |
 
 ```bash
 uv run sim2real/rl_policy/tracking.py \
@@ -49,6 +50,30 @@ any4hdmi / SONIC G1 motion policy。
 ## Policy 特殊运行条件
 
 少数 adapted policy 需要不同的 motion source 或额外 runtime asset。
+
+### SP-Tracking SPV5-2
+
+仓库内置 **0728 / 22000** checkpoint 的专用入口，见
+[sim2sim 与 G1 部署说明](sp-tracking-0728.md)。
+
+源目录需要包含 iteration 一致的 `policy_<iteration>.onnx`、
+`policy_<iteration>.json` 和 `checkpoint_<iteration>.pt`，适配命令如下：
+
+```bash
+uv run scripts/adapt_sp_tracking_spv5_2.py \
+  --checkpoint-dir /path/to/sp_tracking/ckpts/run_name \
+  --iteration 22000
+```
+
+脚本会在 `checkpoints/sp-tracking/spv5_2/` 下生成 `policy.onnx`、
+`policy.json`、`policy.yaml` 和 README。它不改任何 learned node 和 weight，只把
+原始 8199 维扁平输入替换为四个语义输入，并默认执行 CPU ONNX Runtime 等价性检查。
+runtime observation 独立复现 50 步 estimator history、50 帧 reference window
+（`-42..7`）和 13 个 key-body feature，不会改变已有 observation group。最远
+future reference 为 50 Hz 下的 7 帧，因此 motion-lookahead latency 是 0.14 s。
+
+源 PyTorch checkpoint 只用于校验 iteration 是否配套，不会复制到 runtime
+artifact，从而把训练状态和部署 checkpoint 分开。
 
 ### HoloMotion v1.4.0
 

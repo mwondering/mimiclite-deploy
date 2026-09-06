@@ -44,6 +44,8 @@ const sidebars: SidebarsConfig = {
         'tutorials/pico-teleoperation',
         'tutorials/motion-recording',
         'tutorials/run-external-policies',
+        'tutorials/sp-tracking-0728',
+        'tutorials/sp-tracking-0728-validation',
       ],
     },
     'faq',
