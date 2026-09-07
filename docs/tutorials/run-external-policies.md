@@ -20,6 +20,7 @@ value.
 
 | Policy | Checkpoint YAML | Notes |
 | --- | --- | --- |
+| MimicLite-ROA / 9287d8e0 | `checkpoints/mimic-lite/roa_9287d8e0/policy.yaml` | Included official ONNX and YAML; IR 10 / opset 20, validated with the root CPU runtime. |
 | Mimic-Lite v1.1 | `checkpoints/mimic-lite/v1_1/policy.yaml` | Full-scale T16 PPO-ROA finetune student. |
 | HEFT PMG | `checkpoints/heft/pmg/policy.yaml` | Normal G1 motion stream. |
 | HEFT Compliance | `checkpoints/heft/compliance/policy.yaml` | Normal G1 motion stream; compliance flag is forced off in the observation. |

@@ -18,6 +18,7 @@ policy YAML。
 
 | Policy | Checkpoint YAML | Notes |
 | --- | --- | --- |
+| MimicLite-ROA / 9287d8e0 | `checkpoints/mimic-lite/roa_9287d8e0/policy.yaml` | 包含官方 ONNX 和 YAML；IR 10 / opset 20，已在 root CPU 运行时验证。 |
 | Mimic-Lite v1.1 | `checkpoints/mimic-lite/v1_1/policy.yaml` | Full-scale T16 PPO-ROA finetune student。 |
 | HEFT PMG | `checkpoints/heft/pmg/policy.yaml` | 正常 G1 motion stream。 |
 | HEFT Compliance | `checkpoints/heft/compliance/policy.yaml` | 正常 G1 motion stream；observation 里 compliance flag 固定为 off。 |

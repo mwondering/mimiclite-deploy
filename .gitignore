@@ -6,6 +6,9 @@ checkpoints/*
 checkpoints/sp-tracking/*
 !checkpoints/sp-tracking/0728_baoshou_waist_dataclean_changedr/
 !checkpoints/sp-tracking/spv5_2a_0907_105000/
+!checkpoints/mimic-lite/
+checkpoints/mimic-lite/*
+!checkpoints/mimic-lite/roa_9287d8e0/
 .vscode
 stubs
 /legacy

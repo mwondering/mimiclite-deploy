@@ -10,7 +10,8 @@ Full documentation: [https://egalahad.github.io/sim2real/](https://egalahad.gith
 
 ## Runtime Artifacts
 
-本仓库包含 SP-Tracking 0728 / 22000 和 SPV5-2A / 105000 的部署文件。
+本仓库包含 SP-Tracking 0728 / 22000、SPV5-2A / 105000 和官方
+MimicLite-ROA 9287d8e0 的部署文件。
 其他大文件不放在 git 里。先从共享的
 [sim2real artifacts](https://drive.google.com/drive/folders/1lrPyiiy7anyG3P4wHNIQQQlydboLPd9e)
 下载，把 `checkpoints/` 和 `third_party/` 放到 repo 根目录。
@@ -32,7 +33,8 @@ uv sync --extra inference-cpu
 uv run sim2real/sim_env/base_sim.py --robot g1
 uv run sim2real/rl_policy/tracking.py \
   --robot g1 \
-  --policy_config checkpoints/mimic-lite/32x8192-huge/policy.yaml
+  --policy_config checkpoints/mimic-lite/roa_9287d8e0/policy.yaml \
+  --motion_path hf://elijahgalahad/any4hdmi-g1-lafan/motions/walk1_subject1.npz
 ```
 
 两个进程都启动后，在 policy 终端按 `]` 开始跟踪，然后打开 `base_sim.py` 打印出来的 mjviser URL。虚拟 gantry / elastic band 的开关和长度在 viewer UI 里调。
@@ -53,6 +55,7 @@ uv run sim2real/rl_policy/tracking.py \
 
 | Policy family | Config path(s) | 说明 |
 | --- | --- | --- |
+| MimicLite-ROA（9287d8e0） | `checkpoints/mimic-lite/roa_9287d8e0/policy.yaml` | 包含官方未修改的 ONNX 和 YAML；[来源、启动及兼容性说明](checkpoints/mimic-lite/roa_9287d8e0/README_zh.md)。 |
 | Mimic-Lite | `checkpoints/mimic-lite` | Native mimic-lite tracking checkpoints。 |
 | BFM-Zero | `checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml` | Latent-conditioned motion tracker。 |
 | ScaleBFM | `checkpoints/scalebfm` | [WeishuaiZeng/ScaleBFM](https://huggingface.co/WeishuaiZeng/ScaleBFM) 的 Humanoid Transformer M 和 XL ONNX exports。 |

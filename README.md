@@ -10,8 +10,9 @@ If you're looking for the HDMI deployment stack, go to [hdmi tag](https://github
 
 ## Runtime Artifacts
 
-The SP-Tracking 0728 / 22000 and SPV5-2A / 105000 deploy artifacts are included
-in this repository. Other large runtime artifacts are not stored in git. Download the shared
+The SP-Tracking 0728 / 22000, SPV5-2A / 105000, and official MimicLite-ROA
+9287d8e0 deploy artifacts are included in this repository. Other large runtime
+artifacts are not stored in git. Download the shared
 [sim2real artifacts](https://drive.google.com/drive/folders/1lrPyiiy7anyG3P4wHNIQQQlydboLPd9e)
 folder and place `checkpoints/` and `third_party/` at the repo root.
 
@@ -32,7 +33,7 @@ Run offline motion tracking (sim2sim):
 ```bash
 uv run sim2real/sim_env/base_sim.py --robot g1
 uv run sim2real/rl_policy/tracking.py --robot g1 \
-  --policy_config checkpoints/mimic-lite/v1_1/policy.yaml \
+  --policy_config checkpoints/mimic-lite/roa_9287d8e0/policy.yaml \
   --motion_path hf://elijahgalahad/any4hdmi-g1-lafan/motions/walk1_subject1.npz
 ```
 
@@ -54,6 +55,7 @@ Currently supported adapted / distributed checkpoint families:
 
 | Policy family | Config path(s) | Notes |
 | --- | --- | --- |
+| MimicLite-ROA (9287d8e0) | `checkpoints/mimic-lite/roa_9287d8e0/policy.yaml` | Included official, unmodified ONNX and YAML; [source, usage, and compatibility](checkpoints/mimic-lite/roa_9287d8e0/README.md). |
 | Mimic-Lite v1.1 | `checkpoints/mimic-lite/v1_1/policy.yaml` | T16 PPO-ROA finetune student with action and student-latent outputs. |
 | Mimic-Lite Huge | `checkpoints/mimic-lite/32x8192-huge/policy.yaml` | Original Huge release. |
 | BFM-Zero | `checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml` | Latent-conditioned motion tracker. |
