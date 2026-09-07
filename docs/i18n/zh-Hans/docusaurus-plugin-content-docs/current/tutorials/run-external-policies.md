@@ -34,6 +34,7 @@ policy YAML。
 | HoloMotion v1.4.0 | `checkpoints/holomotion/v1_4_0/policy.yaml` | 需要官方 1.64 GB ONNX artifact。 |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | 正常 G1 motion stream。 |
 | SP-Tracking SPV5-2 | `checkpoints/sp-tracking/spv5_2/policy.yaml` | 从 SPV5-2 export 在本地生成；使用正常 G1 motion stream。 |
+| SP-Tracking SPV5-2A / 105000 | `checkpoints/sp-tracking/spv5_2a_0907_105000/policy.yaml` | 包含部署 ONNX；用通用 runtime 加载此 YAML，不要使用固定模型哈希的 0728 启动脚本。 |
 
 ```bash
 uv run sim2real/rl_policy/tracking.py \

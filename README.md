@@ -10,7 +10,8 @@ If you're looking for the HDMI deployment stack, go to [hdmi tag](https://github
 
 ## Runtime Artifacts
 
-Large runtime artifacts are not stored in git. Download the shared
+The SP-Tracking 0728 / 22000 and SPV5-2A / 105000 deploy artifacts are included
+in this repository. Other large runtime artifacts are not stored in git. Download the shared
 [sim2real artifacts](https://drive.google.com/drive/folders/1lrPyiiy7anyG3P4wHNIQQQlydboLPd9e)
 folder and place `checkpoints/` and `third_party/` at the repo root.
 
@@ -66,6 +67,7 @@ Currently supported adapted / distributed checkpoint families:
 | HEFT | `checkpoints/heft` | PMG and compliance variants. |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | TWIST2 policy wrapper. |
 | SP-Tracking SPV5-2 (0728 / 22000) | `checkpoints/sp-tracking/0728_baoshou_waist_dataclean_changedr/policy.yaml` | Includes the deploy ONNX; [sim2sim and G1 commands](docs/tutorials/sp-tracking-0728.md). |
+| SP-Tracking SPV5-2A (0907 / 105000) | `checkpoints/sp-tracking/spv5_2a_0907_105000/policy.yaml` | Includes the deploy ONNX; [sim2sim and G1 commands](checkpoints/sp-tracking/spv5_2a_0907_105000/README.md). |
 
 ![Unified cross-codebase tracking evaluation](assets/mimic_lite_cross_codebase_tracking_eval.png)
 

@@ -10,7 +10,8 @@ Full documentation: [https://egalahad.github.io/sim2real/](https://egalahad.gith
 
 ## Runtime Artifacts
 
-大文件不放在 git 里。先从共享的
+本仓库包含 SP-Tracking 0728 / 22000 和 SPV5-2A / 105000 的部署文件。
+其他大文件不放在 git 里。先从共享的
 [sim2real artifacts](https://drive.google.com/drive/folders/1lrPyiiy7anyG3P4wHNIQQQlydboLPd9e)
 下载，把 `checkpoints/` 和 `third_party/` 放到 repo 根目录。
 
@@ -64,6 +65,7 @@ uv run sim2real/rl_policy/tracking.py \
 | HEFT | `checkpoints/heft` | PMG 和 compliance 两个版本。 |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | TWIST2 policy wrapper。 |
 | SP-Tracking SPV5-2（0728 / 22000） | `checkpoints/sp-tracking/0728_baoshou_waist_dataclean_changedr/policy.yaml` | 包含部署 ONNX；[sim2sim 与 G1 启动说明](docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/tutorials/sp-tracking-0728.md)。 |
+| SP-Tracking SPV5-2A（0907 / 105000） | `checkpoints/sp-tracking/spv5_2a_0907_105000/policy.yaml` | 包含部署 ONNX；[sim2sim 与 G1 启动说明](checkpoints/sp-tracking/spv5_2a_0907_105000/README_zh.md)。 |
 
 ![统一的跨代码库动作跟踪评测](assets/mimic_lite_cross_codebase_tracking_eval.png)
 

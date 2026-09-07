@@ -36,6 +36,7 @@ value.
 | HoloMotion v1.4.0 | `checkpoints/holomotion/v1_4_0/policy.yaml` | Requires the official 1.64 GB ONNX artifact. |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | Normal G1 motion stream. |
 | SP-Tracking SPV5-2 | `checkpoints/sp-tracking/spv5_2/policy.yaml` | Generated locally from an SPV5-2 export; normal G1 motion stream. |
+| SP-Tracking SPV5-2A / 105000 | `checkpoints/sp-tracking/spv5_2a_0907_105000/policy.yaml` | Included deploy ONNX; use the ordinary runtime with this YAML, not the hash-pinned 0728 launcher. |
 
 ```bash
 uv run sim2real/rl_policy/tracking.py \
