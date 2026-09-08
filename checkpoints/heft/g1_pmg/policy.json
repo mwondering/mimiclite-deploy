@@ -1,0 +1,87 @@
+{
+  "in_keys": [
+    "context",
+    "motion_command",
+    "target_motion",
+    "proprioception"
+  ],
+  "out_keys": [
+    "action"
+  ],
+  "in_shapes": [
+    [
+      1,
+      1
+    ],
+    [
+      1,
+      114
+    ],
+    [
+      1,
+      806
+    ],
+    [
+      1,
+      808
+    ]
+  ],
+  "out_shapes": [
+    [
+      1,
+      29
+    ]
+  ],
+  "source": {
+    "repository": "https://github.com/Axellwppr/motion_tracking",
+    "branch": "sim2real",
+    "commit": "0d5ba31e33397f3543d350d98b637e26d92f470a",
+    "files_sha256": {
+      "sim2real/config/g1/tracking.yaml": "39703aeec267f1991f1a6050401d265a37f9ce1adef819bb0fc1f9036839e773",
+      "sim2real/config/g1/controller.yaml": "5119276f22445e056b6f47110d95cec0b93607a6f8cef5f2b1f014600cb3cca5",
+      "sim2real/config/g1/ckpts/G1_PMG/policy.onnx": "932993adb4843da401cf9c8da29b844f94aa0e5868d37a08d3ba823a175801c3",
+      "sim2real/config/g1/ckpts/G1_PMG/policy.json": "329a7f07d59bad894e647f78e54c53868b0e58a625d381d04b27fdf4099e4740",
+      "sim2real/config/g1/ckpts/G1_PMG/policy.onnx.data": "5944d6186d77f92522980d1cdc65a9a13f9aab9ca34cf049de20337d7a801742",
+      "sim2real/src/runtime/observation.py": "34d287e725e74fef2ce6e806e96eb14861a3ac1a53463d7ef3e2c9a0792f7274",
+      "sim2real/src/runtime/policy.py": "e0cfe98435a3ad2166d89a39c52d4948acb243216de6daffec18300c23ac75af"
+    },
+    "observation_implementation": "sim2real/src/runtime/observation.py",
+    "observation_order": "sim2real/src/runtime/policy.py:TrackingPolicyRaw._build_obs_modules"
+  },
+  "export": {
+    "script": "scripts/export_heft_policy.py",
+    "onnx_sha256": "b8516db3e9a456a9f5f9ba24abbe41c9dfe11a00a6f69b063654b50395d70d72",
+    "semantic_input_sizes": {
+      "context": 1,
+      "motion_command": 114,
+      "target_motion": 806,
+      "proprioception": 808
+    },
+    "normalization": "embedded unchanged in source graph",
+    "action_output": "deterministic actor mean; equals source conceptual action alias",
+    "single_file": true,
+    "ir_version": 10,
+    "opsets": {
+      "ai.onnx": 20
+    }
+  },
+  "validation": {
+    "runs": 64,
+    "seed": 20260908,
+    "provider": "CPUExecutionProvider",
+    "inputs": "correlated nonzero joint/root states with valid rotations and histories",
+    "action_max_abs_error": 0.0,
+    "repeat_action_max_abs_error": 0.0,
+    "source_action_alias_max_abs_error": 0.0,
+    "source_output_names": [
+      "policy_1",
+      "priv_pred",
+      "_actor_inp",
+      "_actor_feature",
+      "action",
+      "scale",
+      "action_alias_6",
+      "action_log_prob"
+    ]
+  }
+}

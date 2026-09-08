@@ -168,6 +168,48 @@ def test_spv5_2_reference_input_is_frame_major_with_column_major_rot6d() -> None
     np.testing.assert_array_equal(frames[:, 9:], env.motion_data.joint_pos[0])
 
 
+def test_spv5_2_reference_root_tracks_body_layout_changes() -> None:
+    env = _fake_env()
+    env.motion_data.body_pos_w[:] = (0.4, -0.2, 0.8)
+    env.motion_data.body_quat_w[:] = (0.5, 0.5, 0.5, 0.5)
+    core = _core(env)
+    action = np.zeros(29, dtype=np.float32)
+    core.update_once({"action": action})
+    expected = core.reference_encoder_input.copy()
+
+    # The PICO publisher includes MuJoCo's world body; the initial robot
+    # fallback starts with pelvis. Joint names and reference steps stay fixed.
+    world_pos = np.zeros_like(env.motion_data.body_pos_w)
+    world_quat = np.zeros_like(env.motion_data.body_quat_w)
+    world_quat[..., 0] = 1.0
+    env.motion_body_names = ["world", "pelvis"]
+    env.motion_data.body_pos_w = np.concatenate(
+        (world_pos, env.motion_data.body_pos_w), axis=2
+    )
+    env.motion_data.body_quat_w = np.concatenate(
+        (world_quat, env.motion_data.body_quat_w), axis=2
+    )
+    env.total_inference_cnt += 1
+    core.update_once({"action": action})
+    np.testing.assert_array_equal(core.reference_encoder_input, expected)
+
+    # Reordering an established layout must also preserve pelvis semantics.
+    env.motion_body_names.reverse()
+    env.motion_data.body_pos_w = env.motion_data.body_pos_w[:, :, ::-1].copy()
+    env.motion_data.body_quat_w = env.motion_data.body_quat_w[:, :, ::-1].copy()
+    env.total_inference_cnt += 1
+    core.update_once({"action": action})
+    np.testing.assert_array_equal(core.reference_encoder_input, expected)
+
+
+def test_spv5_2_reference_rejects_body_layout_without_root() -> None:
+    env = _fake_env()
+    core = _core(env)
+    env.motion_body_names = ["world"]
+    with pytest.raises(ValueError, match="root_body='pelvis'"):
+        core.update_once({"action": np.zeros(29, dtype=np.float32)})
+
+
 def test_spv5_2_shared_observations_reuse_one_stateful_core() -> None:
     env = _fake_env()
     observations = [

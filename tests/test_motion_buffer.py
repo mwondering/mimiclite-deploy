@@ -4,6 +4,7 @@ import unittest
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 import zmq
@@ -1215,6 +1216,35 @@ class RealtimeMotionBufferTest(unittest.TestCase):
         np.testing.assert_allclose(body_lin_vel_w, 0.0, atol=1e-6)
         np.testing.assert_allclose(body_ang_vel_w, 0.0, atol=1e-6)
 
+    def test_sliding_history_preserves_oldest_interpolation_at_mixed_rates(self) -> None:
+        buffer = RealtimeMotionBuffer(DummyRobotCfg(), future_steps=range(-42, 8))
+        start_ns = 1_000_000_000
+        for index in range(75):
+            timestamp_ns = start_ns + round(index * 1e9 / 30)
+            elapsed_s = (timestamp_ns - start_ns) / 1e9
+            buffer._RealtimeMotionBuffer__append_payload(
+                {
+                    PUBLISH_T_NS_KEY: timestamp_ns,
+                    "joint_pos": [elapsed_s, -elapsed_s],
+                    "body_pos_w": [[elapsed_s, 0.0, 0.8], [elapsed_s, 0.0, 1.0]],
+                    "body_quat_w": [_yaw_quat(elapsed_s), _yaw_quat(elapsed_s)],
+                },
+                recv_time_ns=timestamp_ns,
+            )
+
+        # A 50 Hz policy queries between the 30 Hz publisher frames. Cleanup
+        # must retain the left interpolation frame of the oldest history slot.
+        for tick in range(10):
+            now_ns = 3_027_000_000 + tick * 20_000_000
+            with patch("sim2real.rl_policy.utils.motion_buffer.time.time_ns", return_value=now_ns):
+                motion = buffer.get_obs()
+            expected_s = (motion.timestamps_ns[0] - start_ns) / 1e9
+            np.testing.assert_allclose(motion.joint_pos[0, :, 0], expected_s, atol=3e-7)
+            np.testing.assert_allclose(motion.body_pos_w[0, :, 0, 0], expected_s, atol=3e-7)
+            np.testing.assert_allclose(motion.joint_vel[0, :, 0], 1.0, atol=1e-5)
+            expected_quat = np.asarray([_yaw_quat(value) for value in expected_s])
+            np.testing.assert_allclose(motion.body_quat_w[0, :, 0], expected_quat, atol=3e-7)
+
     def test_partial_future_window_interpolates_then_clamps_to_latest(self) -> None:
         buffer = RealtimeMotionBuffer(DummyRobotCfg(), future_steps=[0])
         t0_ns = 1_000_000_000
@@ -1281,6 +1311,40 @@ class RealtimeMotionBufferTest(unittest.TestCase):
         self.assertEqual(buffer.joint_names, list(DummyRobotCfg.joint_names))
         with buffer._lock:
             np.testing.assert_allclose(buffer._joint_pos_frames[0], [0.25, -0.5])
+
+    def test_smpl_resamples_positions_between_publisher_frames(self) -> None:
+        buffer = RealtimeSmplMotionBuffer(DummyRobotCfg(), future_steps=[0])
+        buffer._timestamps_ns = [1_000_000_000, 1_033_333_333]
+        frames = [np.zeros((24, 3), dtype=np.float32), np.ones((24, 3), dtype=np.float32)]
+        times = np.array([990_000_000, 1_020_000_000, 1_050_000_000])
+        values = buffer._sample_array_locked(frames, times)
+        np.testing.assert_allclose(values[:, 0, 0], [0.0, 0.6, 1.0], atol=1e-6)
+
+    def test_smpl_resamples_quaternions_on_shortest_path(self) -> None:
+        buffer = RealtimeSmplMotionBuffer(DummyRobotCfg(), future_steps=[0])
+        buffer._timestamps_ns = [0, 100]
+        frames = [np.asarray(_yaw_quat(np.deg2rad(170))), np.asarray(_yaw_quat(np.deg2rad(-170)))]
+        value = buffer._sample_array_locked(frames, np.array([50]), interpolation="quaternion")
+        self.assertAlmostEqual(abs(_yaw_from_quat(value[0])), np.pi, places=5)
+        np.testing.assert_allclose(np.linalg.norm(value, axis=-1), 1, atol=1e-6)
+        # Quaternion signs do not change a physical orientation.
+        repeated = buffer._sample_array_locked([frames[0], -frames[0]], np.array([50]), interpolation="quaternion")
+        np.testing.assert_allclose(repeated[0], frames[0], atol=1e-6)
+
+    def test_smpl_resamples_axis_angles_without_wrapping_through_zero(self) -> None:
+        buffer = RealtimeSmplMotionBuffer(DummyRobotCfg(), future_steps=[0])
+        buffer._timestamps_ns = [0, 100]
+        a = np.zeros((21, 3)); a[:, 2] = np.deg2rad(170)
+        b = np.zeros((21, 3)); b[:, 2] = np.deg2rad(-170)
+        value = buffer._sample_array_locked([a, b], np.array([50]), interpolation="rotvec")
+        np.testing.assert_allclose(np.abs(value[0, :, 2]), np.pi, atol=1e-6)
+
+    def test_smpl_duplicate_timestamps_stay_finite(self) -> None:
+        buffer = RealtimeSmplMotionBuffer(DummyRobotCfg(), future_steps=[0])
+        buffer._timestamps_ns = [100, 100]
+        frames = [np.array([1.0]), np.array([1.0])]
+        value = buffer._sample_array_locked(frames, np.array([50, 100, 150]))
+        np.testing.assert_array_equal(value, np.ones((3, 1)))
 
     def test_smpl_buffer_uses_first_frame_clock_alignment(self) -> None:
         buffer = RealtimeSmplMotionBuffer(DummyRobotCfg(), future_steps=[0])

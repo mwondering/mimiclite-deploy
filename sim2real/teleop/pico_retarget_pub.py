@@ -45,6 +45,8 @@ from sim2real.config.robots.base import (
 )
 from sim2real.teleop.smpl_stream import (
     DEFAULT_HUMAN_JOINTS_INFO_PATH,
+    apply_sonic_wrist_targets,
+    build_neutral_smpl_frame,
     build_smpl_frame_from_xrobot_raw,
     json_safe_payload,
     pack_pose_message,
@@ -568,6 +570,11 @@ class LiveRetargetPublisher:
                 "SMPL robot_joint_pos length mismatch: "
                 f"expected {len(self.robot_cfg.joint_names)}, got {robot_joint_pos.shape[0]}"
             )
+        robot_joint_pos = apply_sonic_wrist_targets(
+            robot_joint_pos,
+            self.robot_cfg.joint_names,
+            smpl_frame["smpl_body_pose_aa"],
+        )
 
         fields = {
             "smpl_body_pose_aa": smpl_frame["smpl_body_pose_aa"][None, ...].astype(
@@ -615,7 +622,9 @@ class LiveRetargetPublisher:
 
     def _publish_paused_smpl_frame(self) -> None:
         if self._last_smpl_frame is None:
-            return
+            self._last_smpl_frame = build_neutral_smpl_frame(
+                str(self.args.smpl_human_joints_info_path)
+            )
         smpl_frame = {
             key: np.asarray(value, dtype=np.float32).copy()
             for key, value in self._last_smpl_frame.items()

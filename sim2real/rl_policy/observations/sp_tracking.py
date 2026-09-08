@@ -349,7 +349,9 @@ class _SPV52ObservationCore:
             self.joint_names,
             self.keypoint_specs,
         )
-        self._layout: tuple[tuple[str, ...], tuple[str, ...], tuple[int, ...]] | None = None
+        self._layout: tuple[
+            tuple[str, ...], tuple[str, ...], tuple[str, ...], tuple[int, ...]
+        ] | None = None
         self._state_joint_indices: np.ndarray | None = None
         self._motion_joint_indices: np.ndarray | None = None
         self._motion_step_indices: np.ndarray | None = None
@@ -383,10 +385,13 @@ class _SPV52ObservationCore:
     def _refresh_layout(self) -> None:
         state_names = tuple(str(name) for name in self.env.state_processor.joint_names)
         motion_names = tuple(str(name) for name in getattr(self.env, "motion_joint_names", ()))
+        body_names = tuple(str(name) for name in getattr(self.env, "motion_body_names", ()))
         motion_steps = tuple(
             int(step) for step in np.asarray(getattr(self.env, "motion_future_steps", ())).reshape(-1)
         )
-        layout = (state_names, motion_names, motion_steps)
+        # A realtime publisher can add/reorder bodies without changing joints.
+        # In particular, MuJoCo's world body shifts pelvis from index 0 to 1.
+        layout = (state_names, motion_names, body_names, motion_steps)
         if layout == self._layout:
             return
 
@@ -399,7 +404,6 @@ class _SPV52ObservationCore:
         missing_state = [name for name in self.joint_names if name not in state_names]
         missing_motion = [name for name in self.joint_names if name not in motion_names]
         missing_steps = [step for step in self.reference_steps if step not in motion_steps]
-        body_names = tuple(str(name) for name in getattr(self.env, "motion_body_names", ()))
         if missing_state or missing_motion or missing_steps or self.root_body_name not in body_names:
             raise ValueError(
                 "SPV5-2 runtime layout mismatch: "

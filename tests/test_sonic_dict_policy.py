@@ -75,8 +75,12 @@ class SonicDictPolicyContractTest(unittest.TestCase):
         expected = {
             "release/g1": {"g1_input": [640], "proprioception": [930]},
             "release/smpl": {"smpl_input": [840], "proprioception": [930]},
-            "v1_1/g1": {"g1_input": [640], "proprioception": [930]},
         }
+        # The included release is required. v1.1 is a separate optional download;
+        # validate it too whenever any of its deployment artifacts are present.
+        v11 = checkpoint_root / "v1_1/g1"
+        if (v11 / "policy.yaml").exists() or (v11 / "policy.onnx").exists():
+            expected["v1_1/g1"] = {"g1_input": [640], "proprioception": [930]}
 
         for mode, expected_inputs in expected.items():
             with self.subTest(mode=mode):

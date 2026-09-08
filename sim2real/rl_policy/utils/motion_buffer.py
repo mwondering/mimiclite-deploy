@@ -5,10 +5,11 @@ import threading
 import time
 from bisect import bisect_right
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 import numpy as np
 import zmq
+from scipy.spatial.transform import Rotation
 
 from loguru import logger
 from sim2real.config.robots.base import (
@@ -894,6 +895,10 @@ class RealtimeMotionBuffer:
     def cleanup(self, cutoff_ns: int) -> None:
         with self._lock:
             while self._timestamps_ns and self._timestamps_ns[0] < cutoff_ns:
+                # Keep the left endpoint needed to interpolate the oldest
+                # requested history sample between publisher frames.
+                if len(self._timestamps_ns) > 1 and self._timestamps_ns[1] > cutoff_ns:
+                    break
                 self._timestamps_ns.pop(0)
                 self._joint_pos_frames.pop(0)
                 self._joint_vel_frames.pop(0)
@@ -1171,6 +1176,8 @@ class RealtimeSmplMotionBuffer:
         self,
         frames: list[np.ndarray],
         target_times_ns: np.ndarray,
+        *,
+        interpolation: Literal["linear", "quaternion", "rotvec"] = "linear",
     ) -> np.ndarray:
         if not frames:
             raise ValueError("No SMPL frames buffered")
@@ -1178,9 +1185,26 @@ class RealtimeSmplMotionBuffer:
             return np.broadcast_to(frames[0], (target_times_ns.shape[0], *frames[0].shape)).copy()
         timestamps_ns = np.asarray(self._timestamps_ns, dtype=np.int64)
         clamped = np.clip(target_times_ns, timestamps_ns[0], timestamps_ns[-1])
-        idx = np.searchsorted(timestamps_ns, clamped, side="left")
-        idx = np.clip(idx, 0, timestamps_ns.shape[0] - 1)
-        return np.stack([frames[int(i)] for i in idx], axis=0)
+        right = np.clip(np.searchsorted(timestamps_ns, clamped, side="right"),
+                        1, timestamps_ns.shape[0] - 1)
+        left = right - 1
+        span = timestamps_ns[right] - timestamps_ns[left]
+        alpha = np.divide(clamped - timestamps_ns[left], span,
+                          out=np.zeros(clamped.shape, dtype=np.float64), where=span > 0)
+        a = np.stack([frames[int(i)] for i in left])
+        b = np.stack([frames[int(i)] for i in right])
+        # PICO publishes at 30 Hz while the policy consumes 50 Hz references.
+        # Taking the next frame caused a staircase in every future input. Use
+        # linear positions/wrists and shortest-path interpolation for rotations.
+        if interpolation == "quaternion":
+            return _quat_slerp_batch(a, b, alpha).astype(np.float32)
+        if interpolation == "rotvec":
+            qa = Rotation.from_rotvec(a.reshape(-1, 3)).as_quat(scalar_first=True).reshape(*a.shape[:-1], 4)
+            qb = Rotation.from_rotvec(b.reshape(-1, 3)).as_quat(scalar_first=True).reshape(*b.shape[:-1], 4)
+            quat = _quat_slerp_batch(qa, qb, alpha)
+            return Rotation.from_quat(quat.reshape(-1, 4), scalar_first=True).as_rotvec().reshape(a.shape).astype(np.float32)
+        weight = alpha.reshape((-1,) + (1,) * (a.ndim - 1))
+        return ((1 - weight) * a + weight * b).astype(np.float32)
 
     def get_obs(self) -> SmplMotionData:
         current_time_ns = time.time_ns()
@@ -1211,6 +1235,7 @@ class RealtimeSmplMotionBuffer:
                 smpl_body_pose_aa = self._sample_array_locked(
                     self._smpl_body_pose_aa_frames,
                     target_times_ns,
+                    interpolation="rotvec",
                 )
                 smpl_joint_pos_root = self._sample_array_locked(
                     self._smpl_joint_pos_root_frames,
@@ -1219,6 +1244,7 @@ class RealtimeSmplMotionBuffer:
                 smpl_root_quat_w = self._sample_array_locked(
                     self._smpl_root_quat_w_frames,
                     target_times_ns,
+                    interpolation="quaternion",
                 )
                 joint_pos = self._sample_array_locked(self._joint_pos_frames, target_times_ns)
 

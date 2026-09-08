@@ -10,8 +10,8 @@ Full documentation: [https://egalahad.github.io/sim2real/](https://egalahad.gith
 
 ## Runtime Artifacts
 
-本仓库包含 SP-Tracking 0728 / 22000、SPV5-2A / 105000 和官方
-MimicLite-ROA 9287d8e0 的部署文件。
+本仓库包含 SP-Tracking 0728 / 22000、SPV5-2A / 105000、官方
+MimicLite-ROA 9287d8e0、HEFT G1 PMG，以及 SONIC release G1 / SMPL 的部署文件。
 其他大文件不放在 git 里。先从共享的
 [sim2real artifacts](https://drive.google.com/drive/folders/1lrPyiiy7anyG3P4wHNIQQQlydboLPd9e)
 下载，把 `checkpoints/` 和 `third_party/` 放到 repo 根目录。
@@ -30,7 +30,9 @@ uv sync --extra inference-cpu
 运行离线动作跟踪（sim2sim）：
 
 ```bash
+HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
 uv run sim2real/sim_env/base_sim.py --robot g1
+HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
 uv run sim2real/rl_policy/tracking.py \
   --robot g1 \
   --policy_config checkpoints/mimic-lite/roa_9287d8e0/policy.yaml \
@@ -59,13 +61,14 @@ uv run sim2real/rl_policy/tracking.py \
 | Mimic-Lite | `checkpoints/mimic-lite` | Native mimic-lite tracking checkpoints。 |
 | BFM-Zero | `checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml` | Latent-conditioned motion tracker。 |
 | ScaleBFM | `checkpoints/scalebfm` | [WeishuaiZeng/ScaleBFM](https://huggingface.co/WeishuaiZeng/ScaleBFM) 的 Humanoid Transformer M 和 XL ONNX exports。 |
-| SONIC release | `checkpoints/sonic/release` | Release G1 和 SMPL encoder variants。 |
+| SONIC release | `checkpoints/sonic/release/{g1,smpl}/policy.yaml` | 包含默认 G1 / SMPL 的完整单文件 ONNX；PICO 默认使用 SMPL 模式。[来源、验证与启动命令](checkpoints/sonic/release/README_zh.md)。 |
 | SONIC v1.1 | `checkpoints/sonic/v1_1/g1/policy.yaml` | 使用 heading-normalized reference orientation 的 G1 policy。 |
 | SONIC low-latency | `checkpoints/sonic/low_latency` | Low-latency G1 和 SMPL variants。 |
 | HoloMotion v1.4.0 | `checkpoints/holomotion/v1_4_0/policy.yaml` | 使用官方未修改 ONNX：[HorizonRobotics/HoloMotion_models](https://huggingface.co/HorizonRobotics/HoloMotion_models/resolve/main/HoloMotion_motion_tracking_model_v1.4.0/exported/model_14000.onnx)，下载后放到 `checkpoints/holomotion/v1_4_0/policy.onnx`。 |
 | TeleopIT | `checkpoints/teleopit/policy.yaml` | TeleopIT policy wrapper。 |
 | Humanoid-GPT | `checkpoints/humanoid-gpt/policy.yaml` | Humanoid-GPT policy wrapper。 |
-| HEFT | `checkpoints/heft` | PMG 和 compliance 两个版本。 |
+| HEFT G1 PMG | `checkpoints/heft/g1_pmg/policy.yaml` | 包含 `motion_tracking` 的 `sim2real` 分支中默认 G1 PMG policy 的适配；[来源、验证与 PICO 命令](checkpoints/heft/g1_pmg/README_zh.md)。 |
+| HEFT compliance | `checkpoints/heft` | 单独分发的 compliance 版本。 |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | TWIST2 policy wrapper。 |
 | SP-Tracking SPV5-2（0728 / 22000） | `checkpoints/sp-tracking/0728_baoshou_waist_dataclean_changedr/policy.yaml` | 包含部署 ONNX；[sim2sim 与 G1 启动说明](docs/i18n/zh-Hans/docusaurus-plugin-content-docs/current/tutorials/sp-tracking-0728.md)。 |
 | SP-Tracking SPV5-2A（0907 / 105000） | `checkpoints/sp-tracking/spv5_2a_0907_105000/policy.yaml` | 包含部署 ONNX；[sim2sim 与 G1 启动说明](checkpoints/sp-tracking/spv5_2a_0907_105000/README_zh.md)。 |
@@ -83,6 +86,8 @@ root XY 位移为 1.5--3.0 m。
 | Policy | MimicLite | BFM-Zero | ScaleBFM | SONIC release | SONIC low-latency | HoloMotion | TeleopIT | Humanoid-GPT | HEFT | TWIST2 | SPV5-2 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Motion-lookahead latency | 0.08 s | 0.12 s | 0.10 s | 0.90 s | 0.18 s | 0.20 s | 0.00 s | 0.02 s | 0.12 s | 0.00 s | 0.14 s |
+
+上表中 SONIC release 的 0.90 s 对应 G1 机器人参考模式；默认 PICO SMPL 模式的参考前瞻为 0.18 s。
 
 ## 真机环境
 

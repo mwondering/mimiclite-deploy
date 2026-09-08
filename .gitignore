@@ -2,6 +2,12 @@ outputs*
 datasets
 
 checkpoints/*
+!checkpoints/sonic/
+checkpoints/sonic/*
+!checkpoints/sonic/release/
+!checkpoints/heft/
+checkpoints/heft/*
+!checkpoints/heft/g1_pmg/
 !checkpoints/sp-tracking/
 checkpoints/sp-tracking/*
 !checkpoints/sp-tracking/0728_baoshou_waist_dataclean_changedr/
@@ -26,6 +32,10 @@ stubs
 !/tests/test_dh116s_keyboard_control.py
 !/tests/test_bfm_zero_observations.py
 !/tests/test_sp_tracking_observations.py
+!/tests/test_isaaclab_motion.py
+!/tests/test_heft_observations.py
+!/tests/test_sonic_release_observations.py
+!/tests/test_sonic_pico_smpl.py
 /third_party/*
 !/third_party/dh116s_sdk/
 /third_party/dh116s_sdk/*

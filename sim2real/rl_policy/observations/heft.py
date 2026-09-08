@@ -17,7 +17,6 @@ class heft_policy_obs(motion_obs, namespace="heft"):
     previous raw actions. This adaptation is G1-only.
     """
 
-    OBS_DIM = 1729
     INCLUDE_COMPLIANCE_FLAG = False
     COMPLIANCE_FLAG = False
     COMPLIANCE_FLAG_THRESHOLD = 10.0
@@ -64,10 +63,10 @@ class heft_policy_obs(motion_obs, namespace="heft"):
                     f"got {self.future_steps.tolist()}"
                 )
 
-        self.root_angvel_history_steps = [int(step) for step in root_angvel_history_steps]
-        self.projected_gravity_history_steps = [int(step) for step in projected_gravity_history_steps]
-        self.joint_pos_history_steps = [int(step) for step in joint_pos_history_steps]
-        self.joint_vel_history_steps = [int(step) for step in joint_vel_history_steps]
+        self.root_angvel_history_steps = self._history_steps(root_angvel_history_steps)
+        self.projected_gravity_history_steps = self._history_steps(projected_gravity_history_steps)
+        self.joint_pos_history_steps = self._history_steps(joint_pos_history_steps)
+        self.joint_vel_history_steps = self._history_steps(joint_vel_history_steps)
         self.prev_action_steps = int(prev_action_steps)
         if self.prev_action_steps <= 0:
             raise ValueError("prev_action_steps must be positive")
@@ -104,7 +103,40 @@ class heft_policy_obs(motion_obs, namespace="heft"):
             (self.prev_action_steps, len(self.joint_names)),
             dtype=np.float32,
         )
-        self._obs = np.zeros((1, self.OBS_DIM), dtype=np.float32)
+        n_ref, n_joint = len(self.future_steps), len(self.joint_names)
+        self.component_dims = {"context": 1, "motion_command": (n_ref - 1) * 3 + n_ref * 6}
+        if self.INCLUDE_COMPLIANCE_FLAG:
+            self.component_dims["compliance_context"] = 3
+        self.component_dims.update({
+            "target_motion": n_ref * (2 * n_joint + 1 + 3),
+            "proprioception": (
+                3 * (len(self.root_angvel_history_steps) + len(self.projected_gravity_history_steps))
+                + n_joint * (len(self.joint_pos_history_steps) + len(self.joint_vel_history_steps)
+                             + self.prev_action_steps)
+            ),
+        })
+        self._parts = {name: np.zeros(dim, dtype=np.float32)
+                       for name, dim in self.component_dims.items()}
+        self._obs = np.zeros((1, sum(self.component_dims.values())), dtype=np.float32)
+        self._reset_action_pending = True
+        self._last_update_step: int | None = None
+
+    @staticmethod
+    def _history_steps(steps: Sequence[int]) -> list[int]:
+        result = [int(step) for step in steps]
+        if not result or any(step < 0 for step in result):
+            raise ValueError("HEFT history steps must be non-empty and non-negative")
+        return result
+
+    @staticmethod
+    def _normalized_quat(quat: np.ndarray) -> np.ndarray:
+        # Source observations use scipy Rotation.from_quat, which normalizes
+        # input IMU and reference quaternions before both gravity and rotation.
+        quat = np.asarray(quat, dtype=np.float32)
+        norm = np.linalg.norm(quat, axis=-1, keepdims=True)
+        if np.any(norm < 1.0e-8) or not np.all(np.isfinite(norm)):
+            raise ValueError("HEFT observation requires finite, nonzero quaternions")
+        return quat / norm
 
     def reset(self) -> None:
         super().reset()
@@ -115,6 +147,12 @@ class heft_policy_obs(motion_obs, namespace="heft"):
         self._joint_vel_history[:] = 0.0
         self._prev_actions[:] = 0.0
         self._obs[:] = 0.0
+        for part in self._parts.values():
+            part[:] = 0.0
+        # Upstream Policy.reset() also zeroes last_action. The generic runtime
+        # retains its last output, so ignore that stale sample on the next step.
+        self._reset_action_pending = True
+        self._last_update_step = None
 
     def _current_joint_pos(self) -> np.ndarray:
         return np.asarray(
@@ -130,7 +168,7 @@ class heft_policy_obs(motion_obs, namespace="heft"):
 
     def _current_projected_gravity(self) -> np.ndarray:
         gravity = quat_rotate_inverse_numpy(
-            np.asarray(self.state_processor.root_quat_w, dtype=np.float32).reshape(1, 4),
+            self._normalized_quat(self.state_processor.root_quat_w).reshape(1, 4),
             np.asarray([[0.0, 0.0, -1.0]], dtype=np.float32),
         )[0]
         return (gravity / (np.linalg.norm(gravity) + 1.0e-8)).astype(np.float32)
@@ -147,6 +185,9 @@ class heft_policy_obs(motion_obs, namespace="heft"):
         return np.asarray([value, value * threshold, value * kp], dtype=np.float32)
 
     def update(self, data: Dict[str, Any]) -> None:
+        step = getattr(self.env, "total_inference_cnt", None)
+        if step is not None and self._last_update_step == int(step):
+            return
         super().update(data)
         self._boot_indicator_value = max(self._boot_indicator_value - 1, 0)
         self._append_history(
@@ -166,21 +207,27 @@ class heft_policy_obs(motion_obs, namespace="heft"):
                 f"Previous action dim mismatch: expected {len(self.joint_names)}, "
                 f"got {prev_action.shape[0]}"
             )
+        if self._reset_action_pending:
+            prev_action = np.zeros_like(prev_action)
+            self._reset_action_pending = False
         self._prev_actions[:] = np.roll(self._prev_actions, 1, axis=0)
         self._prev_actions[0, :] = prev_action
 
-        self._obs[0, :] = self._build_obs()
+        self._parts = self._build_obs_parts()
+        self._obs[0, :] = np.concatenate(list(self._parts.values()))
+        if step is not None:
+            self._last_update_step = int(step)
 
     def _build_obs_parts(self) -> Dict[str, np.ndarray]:
         ref_joint_pos = np.asarray(self._select(self.ref_joint_pos_future)[0], dtype=np.float32)
         ref_root_pos_w = np.asarray(self._select(self.ref_root_pos_future_w)[0], dtype=np.float32)
-        ref_root_quat_w = np.asarray(self._select(self.ref_root_quat_future_w)[0], dtype=np.float32)
+        ref_root_quat_w = self._normalized_quat(self._select(self.ref_root_quat_future_w)[0])
 
         pos_diff_w = ref_root_pos_w[1:] - ref_root_pos_w[0:1]
         base_ref_quat = np.broadcast_to(ref_root_quat_w[0:1], (pos_diff_w.shape[0], 4))
         pos_diff_b = quat_rotate_inverse_numpy(base_ref_quat, pos_diff_w)
 
-        robot_root_quat_w = np.asarray(self.state_processor.root_quat_w, dtype=np.float32)
+        robot_root_quat_w = self._normalized_quat(self.state_processor.root_quat_w)
         robot_root_quat_w = np.broadcast_to(robot_root_quat_w.reshape(1, 4), ref_root_quat_w.shape)
         rel_quat = quat_mul(quat_conjugate(robot_root_quat_w), ref_root_quat_w)
         rel_rot = matrix_from_quat(rel_quat)
@@ -237,15 +284,6 @@ class heft_policy_obs(motion_obs, namespace="heft"):
         )
         return parts
 
-    def _build_obs(self) -> np.ndarray:
-        obs = np.concatenate(
-            list(self._build_obs_parts().values()),
-            axis=0,
-        ).astype(np.float32)
-        if obs.shape[0] != self.OBS_DIM:
-            raise ValueError(f"HEFT G1 tracking obs dim mismatch: {obs.shape[0]} != {self.OBS_DIM}")
-        return obs
-
     def compute(self) -> np.ndarray:
         return self._obs
 
@@ -253,7 +291,6 @@ class heft_policy_obs(motion_obs, namespace="heft"):
 class heft_compliance_policy_obs(heft_policy_obs, namespace="heft"):
     """HEFT G1 Compliance policy input with compliance flag forced off."""
 
-    OBS_DIM = 1590
     INCLUDE_COMPLIANCE_FLAG = True
     COMPLIANCE_FLAG = False
 
@@ -299,7 +336,7 @@ class heft_component_obs(Observation, namespace="heft"):
             self._core.update(data)
 
     def compute(self) -> np.ndarray:
-        parts = self._core._build_obs_parts()
+        parts = self._core._parts
         if self.component not in parts:
             raise ValueError(
                 f"HEFT component {self.component!r} is not present in this policy variant"

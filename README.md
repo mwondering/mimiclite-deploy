@@ -10,8 +10,8 @@ If you're looking for the HDMI deployment stack, go to [hdmi tag](https://github
 
 ## Runtime Artifacts
 
-The SP-Tracking 0728 / 22000, SPV5-2A / 105000, and official MimicLite-ROA
-9287d8e0 deploy artifacts are included in this repository. Other large runtime
+The SP-Tracking 0728 / 22000, SPV5-2A / 105000, official MimicLite-ROA
+9287d8e0, HEFT G1 PMG, and SONIC release G1 / SMPL deploy artifacts are included in this repository. Other large runtime
 artifacts are not stored in git. Download the shared
 [sim2real artifacts](https://drive.google.com/drive/folders/1lrPyiiy7anyG3P4wHNIQQQlydboLPd9e)
 folder and place `checkpoints/` and `third_party/` at the repo root.
@@ -31,7 +31,9 @@ For G1 onboard installation or repair, invoke the repository Codex skill
 Run offline motion tracking (sim2sim):
 
 ```bash
+HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
 uv run sim2real/sim_env/base_sim.py --robot g1
+HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 \
 uv run sim2real/rl_policy/tracking.py --robot g1 \
   --policy_config checkpoints/mimic-lite/roa_9287d8e0/policy.yaml \
   --motion_path hf://elijahgalahad/any4hdmi-g1-lafan/motions/walk1_subject1.npz
@@ -60,13 +62,14 @@ Currently supported adapted / distributed checkpoint families:
 | Mimic-Lite Huge | `checkpoints/mimic-lite/32x8192-huge/policy.yaml` | Original Huge release. |
 | BFM-Zero | `checkpoints/bfm-zero/exp_lafan40-100style_update_z10/policy.yaml` | Latent-conditioned motion tracker. |
 | ScaleBFM | `checkpoints/scalebfm` | ScaleBFM Humanoid Transformer M and XL ONNX exports from [WeishuaiZeng/ScaleBFM](https://huggingface.co/WeishuaiZeng/ScaleBFM). |
-| SONIC release | `checkpoints/sonic/release` | Release G1 and SMPL encoder variants. |
+| SONIC release | `checkpoints/sonic/release/{g1,smpl}/policy.yaml` | Included complete single-file G1 / SMPL ONNX models; PICO uses SMPL mode by default. [Source, validation, and commands](checkpoints/sonic/release/README.md). |
 | SONIC v1.1 | `checkpoints/sonic/v1_1/g1/policy.yaml` | G1 policy with heading-normalized reference orientation. |
 | SONIC low-latency | `checkpoints/sonic/low_latency` | Low-latency G1 and SMPL variants. |
 | HoloMotion v1.4.0 | `checkpoints/holomotion/v1_4_0/policy.yaml` | Uses the official unmodified ONNX from [HorizonRobotics/HoloMotion_models](https://huggingface.co/HorizonRobotics/HoloMotion_models/resolve/main/HoloMotion_motion_tracking_model_v1.4.0/exported/model_14000.onnx); place it at `checkpoints/holomotion/v1_4_0/policy.onnx`. |
 | TeleopIT | `checkpoints/teleopit/policy.yaml` | TeleopIT policy wrapper. |
 | Humanoid-GPT | `checkpoints/humanoid-gpt/policy.yaml` | Humanoid-GPT policy wrapper. |
-| HEFT | `checkpoints/heft` | PMG and compliance variants. |
+| HEFT G1 PMG | `checkpoints/heft/g1_pmg/policy.yaml` | Included adaptation of the default G1 PMG policy in `motion_tracking`'s `sim2real` branch; [source, validation, and PICO commands](checkpoints/heft/g1_pmg/README.md). |
+| HEFT compliance | `checkpoints/heft` | Separately distributed compliance variant. |
 | TWIST2 | `checkpoints/twist2/policy.yaml` | TWIST2 policy wrapper. |
 | SP-Tracking SPV5-2 (0728 / 22000) | `checkpoints/sp-tracking/0728_baoshou_waist_dataclean_changedr/policy.yaml` | Includes the deploy ONNX; [sim2sim and G1 commands](docs/tutorials/sp-tracking-0728.md). |
 | SP-Tracking SPV5-2A (0907 / 105000) | `checkpoints/sp-tracking/spv5_2a_0907_105000/policy.yaml` | Includes the deploy ONNX; [sim2sim and G1 commands](checkpoints/sp-tracking/spv5_2a_0907_105000/README.md). |
@@ -80,6 +83,8 @@ the shared 50 Hz reference-motion contract.
 | Policy | Mimic-Lite v1.1 | Mimic-Lite Huge | Mimic-Lite Base | Mimic-Lite Huge ROA | Mimic-Lite Small | ScaleBFM M | ScaleBFM XL | SONIC | SONIC low-latency | SONIC v1.1 | HoloMotion | HEFT | TeleopIT | Humanoid-GPT | BFM-Zero | TWIST2 | SPV5-2 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Motion-lookahead latency | 0.08 s | 0.08 s | 0.08 s | 0.08 s | 0.08 s | 0.10 s | 0.10 s | 0.90 s | 0.18 s | 0.90 s | 0.20 s | 0.12 s | 0.00 s | 0.02 s | 0.12 s | 0.00 s | 0.14 s |
+
+The SONIC release entry above describes G1 robot-reference mode. The default PICO SMPL mode uses a 0.18 s reference lookahead.
 
 ## Real-robot Environments
 

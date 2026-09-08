@@ -22,13 +22,6 @@ from sim2real.teleop.smpl_stream import (
 from sim2real.utils.math import quat_rotate_inverse_numpy
 
 
-G1_MUJOCO_TO_ISAACLAB_DOF = np.asarray(
-    [0, 6, 12, 1, 7, 13, 2, 8, 14, 3, 9, 15, 22, 4, 10, 16, 23, 5, 11,
-     17, 24, 18, 25, 19, 26, 20, 27, 21, 28],
-    dtype=np.int64,
-)
-
-
 def _resample(values: np.ndarray, source_fps: float, target_fps: float, length: int) -> np.ndarray:
     source_times = np.arange(values.shape[0], dtype=np.float64) / source_fps
     target_times = np.arange(length, dtype=np.float64) / target_fps
@@ -65,14 +58,15 @@ def load_official_walk(
         fps,
         pose_aa.shape[0],
     )
-    robot_dof_isaaclab = robot_dof_mujoco[:, G1_MUJOCO_TO_ISAACLAB_DOF]
-    joint_vel = np.gradient(robot_dof_isaaclab, 1.0 / fps, axis=0).astype(np.float32)
+    # The wire payload names are get_robot_cfg("g1").joint_names, i.e. MuJoCo
+    # order. The policy observation performs the Isaac ordering by joint name.
+    joint_vel = np.gradient(robot_dof_mujoco, 1.0 / fps, axis=0).astype(np.float32)
     return {
         "fps": fps,
         "smpl_body_pose_aa": pose_aa[:, 3:66].reshape(-1, 21, 3),
         "smpl_joint_pos_root": smpl_joint_pos_root.astype(np.float32),
         "smpl_root_quat_w": root_quat_w.astype(np.float32),
-        "joint_pos": robot_dof_isaaclab,
+        "joint_pos": robot_dof_mujoco,
         "joint_vel": joint_vel,
     }
 

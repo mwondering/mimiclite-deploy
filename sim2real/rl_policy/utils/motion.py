@@ -329,9 +329,15 @@ class MotionDataset:
         mjcf_path: str | Path | None = None,
     ) -> "MotionDataset":
         import sim2real
+        from sim2real.rl_policy.utils.isaaclab_motion import prepare_isaaclab_motion
 
         base_dir = Path(sim2real.__file__).parent.parent
-        if mjcf_path is not None:
+        adapted_path = prepare_isaaclab_motion(
+            root_path, robot_cfg=robot_cfg, base_dir=base_dir, mjcf_path=mjcf_path,
+        )
+        if adapted_path is not None:
+            root_path = adapted_path
+        elif mjcf_path is not None:
             root_path = _any4hdmi_manifest_override_view(
                 root_path=root_path,
                 base_dir=base_dir,

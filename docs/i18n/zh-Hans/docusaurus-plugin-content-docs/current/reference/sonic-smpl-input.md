@@ -5,135 +5,88 @@ slug: /reference/sonic-smpl-input
 
 # SONIC SMPL Input
 
-这页记录 SONIC SMPL mode 的 runtime input contract。核心关系是：
+`GR00T-WholeBodyControl` 的默认 SONIC 发布版本使用 SMPL 模式进行 PICO 全身遥操作。本仓库适配配置是 `checkpoints/sonic/release/smpl/policy.yaml`；完整 ONNX 包含 encoder、有限标量量化器（FSQ）和动作 decoder。
 
 ```text
-raw XRobot body poses
-    -> SMPL local body rotations
-    -> SONIC human_joints_info FK
-    -> canonical root-local SMPL joints
-
-GMR retarget
-    -> robot joint_pos
-    -> 同一个 SONIC encoder input 里需要的 wrist joint references
+XRobot 原始全局人体朝向
+    -> 相对父节点的 SMPL 局部旋转
+    -> 官方 human_joints_info FK -> SMPL 关节点参考
+    -> 肘部 swing + 手腕旋转映射 -> G1 手腕参考
+    -> SMPL ZMQ 流 -> SONIC encoder 和 decoder
 ```
 
-SMPL reference 和 GMR retarget 共用同一帧 live tracking 数据，但它们不是同一个表示。
+Publisher 同时生成 GMR 机器人参考，供网页和可选的 SONIC G1 模式使用。SMPL policy 的手腕目标直接采用原 SONIC 映射，不再取 GMR IK 的手腕解。
 
-## Encoder 组成
+## 模型输入
 
-SONIC checkpoint config 里的 SMPL encoder input 是三块：
+单文件 ONNX 接收两个一维 float32 输入，输出 `action[29]` 和 `token[64]`：
 
-| Component | Shape | Runtime source | 含义 |
-|---|---:|---|---|
-| `smpl_joints_multi_future_local_nonflat` | `[10, 72]` | `motion_data.smpl_joint_pos_root` | 24 个 canonical SMPL joints 的 root-local xyz，flatten 后输入。 |
-| `smpl_root_ori_b_multi_future` | `[10, 6]` | `motion_data.smpl_root_quat_w` + 当前 robot root quat | reference root 和 robot root 的相对朝向，用 rotation matrix 前两列表示。 |
-| `joint_pos_multi_future_wrist_for_smpl` | `[10, 6]` | `motion_data.joint_pos` 里的 wrist slice | G1 robot wrist 的 roll、pitch、yaw joint angles，左右各 3 个。 |
+| 输入 | 维数 | 排列 |
+| --- | ---: | --- |
+| `smpl_input` | 840 | 先放全部 10 帧关节点（720），再放全部朝向（60），最后放全部手腕参考（60）。 |
+| `proprioception` | 930 | 各 10 帧的机体角速度（30）、关节位置减默认值（290）、关节速度（290）、上一动作（290）、投影重力（30）。 |
 
-当前 runtime 由 `sim2real/rl_policy/observations/sonic.py::sonic_smpl_official_encoder_input`
-负责把这些字段 pack 到 encoder input。
+Encoder 参考按以下顺序分组拼接：
 
-## Runtime Payload Fields
+| `sonic.py` 中的观测类 | 展平前形状 | 来源 |
+| --- | ---: | --- |
+| `sonic_smpl_joints_multi_future_local` | `[10, 72]` | `motion_data.smpl_joint_pos_root`，24 个标准骨架关节的 xyz。 |
+| `sonic_smpl_root_ori_b_multi_future` | `[10, 6]` | 初始航向对齐后，SMPL 根朝向相对于当前机器人根朝向的旋转。 |
+| `sonic_joint_pos_multi_future_wrist_for_smpl` | `[10, 6]` | `motion_data.joint_pos` 中按名称选出的六个手腕值，已替换为原 SONIC 映射。 |
 
-SMPL ZMQ publisher 会发这些 reference fields：
+参考帧为 `[0, 1, ..., 9]`，间隔 20 ms。旋转特征取矩阵前两列，**按行展开**为 `[R00, R01, R10, R11, R20, R21]`，不是逐列堆叠。历史初始化和关节顺序与原 C++ 部署器一致；YAML 在相应观测上设置 `history_initialization: source_cpp` 和 `joint_order: policy`。
 
-| Payload field | Shape | 含义 |
-|---|---:|---|
-| `smpl_body_pose_aa` | `[N, 21, 3]` | SMPL body local axis-angle rotations，不包含 root。主要用于 traceability 和 buffer 完整性。 |
-| `smpl_joint_pos_root` | `[N, 24, 3]` | canonical SMPL joints 在 SMPL root frame 下的位置；这是 encoder 实际读取的 SMPL joint field。 |
-| `smpl_root_quat_w` | `[N, 4]` | SONIC root-frame conversion 后的 SMPL reference root quaternion，`wxyz` 顺序。 |
-| `joint_pos` | `[N, num_robot_joints]` | retargeted G1 robot joint positions；encoder 只取其中 6 个 wrist joints。 |
+导出包装将这些分组填回原始 universal encoder 的 1762 维输入，固定 mode 为 `2`，其余模式字段补零，运行时不需要构造无用模式输入。来源散列和验证结果见[部署文件说明](https://github.com/mwondering/mimiclite-deploy/blob/main/checkpoints/sonic/release/README_zh.md)。
 
-6 个 wrist joint names 是：
+## 数据流与启动
 
-- `left_wrist_roll_joint`
-- `right_wrist_roll_joint`
-- `left_wrist_pitch_joint`
-- `right_wrist_pitch_joint`
-- `left_wrist_yaw_joint`
-- `right_wrist_yaw_joint`
+启动 `pico_retarget_pub.py` 时必须加 `--publish-smpl`。默认骨架文件已包含在 `checkpoints/sonic/release/smpl/human_joints_info.pkl`，只有需要使用其他兼容骨架时才指定 `--smpl-human-joints-info-path`。Tracking 使用 `--motion-backend smpl_zmq --motion-zmq-connect tcp://127.0.0.1:28702`。完整命令见 [Pico Teleoperation](/tutorials/pico-teleoperation)。
 
-这些是 robot joint names，不是 SMPL skeleton joint names。
+| Payload 字段 | 形状 | 含义 |
+| --- | ---: | --- |
+| `smpl_body_pose_aa` | `[N, 21, 3]` | 相对于父节点的局部 axis-angle 旋转，不含根节点。 |
+| `smpl_joint_pos_root` | `[N, 24, 3]` | 按原 SMPL 根坐标约定旋转后的标准骨架关节点。 |
+| `smpl_root_quat_w` | `[N, 4]` | 经原模型根坐标转换后的 SMPL 根四元数，采用 `wxyz` 顺序。 |
+| `joint_pos` | `[N, 29]` | G1 关节字段，其中六个手腕值采用原 SONIC 映射；其余关节不供 SMPL encoder 使用。 |
 
-## Raw XRobot Data
+首次实时帧到达前，publisher 用相同的官方 FK 构造直立、双臂下垂的中性参考，不用全零关节点代替骨架。实时运行后按 `X` 暂停，SMPL 流保持最后一个人体姿态、手腕参考和朝向，仿真继续运行。并行的 GMR 流 / 网页则回到默认机器人站姿。
 
-XRobot body tracking 每个 body 给一条 pose：
+## 标准骨架计算
+
+XRobot 每个 body 的 pose 为 `[x, y, z, qx, qy, qz, qw]`。四元数描述全局朝向，不是相对父节点的局部旋转，因此 SMPL 链路先转换为局部旋转，再做 FK：
 
 ```text
-[x, y, z, qx, qy, qz, qw]
+原始全局四元数
+    -> 相对父节点的 SMPL 局部旋转
+    -> smpl_body_pose_aa
+    -> human_joints_info.pkl 的静态关节与父节点树
+    -> 标准骨架 FK
+    -> 选择关节 [0..21, 39, 54]
+    -> 原模型根轴向转换和根旋转的逆变换
+    -> smpl_joint_pos_root
 ```
 
-这里的 rotation 按 global body orientation 处理，也就是 tracking/world frame 下每个 body 的朝向；它不是相对 parent 的 local rotation。
+这里保留原 FK 的根关节静态位置偏移。不要额外减掉第 0 个关节，也不要强制将 pelvis 设为零，否则会改变模型训练时的输入。Tracker 原始 body positions 和 GMR 的 `scaled_human_data` 是 IK 目标位置，不是这套标准骨架。
 
-`coordinate_transform_unity_data` 不是 forward kinematics。它只是对每个 body pose 独立做 Unity-to-right-hand 坐标系转换：
+## 手腕映射
+
+手腕参考顺序为：
 
 ```text
-position -> position @ rotation_matrix.T
-orientation -> coordinate_rotation * orientation
+left_wrist_roll, right_wrist_roll,
+left_wrist_pitch, right_wrist_pitch,
+left_wrist_yaw, right_wrist_yaw
 ```
 
-它不会沿 SMPL parent tree forward，也不会生成 canonical SMPL skeleton。
+`sonic_wrist_targets_from_smpl_pose` 对齐原项目 pose 模式的映射：将每侧肘部旋转分解为绕 Y 轴的 twist 和 swing，提取内禀 `XYZ` 欧拉角，再组合肘部 swing 与手腕局部旋转。左右符号与原实现一致；零角度肘部旋转采用有限值处理。
 
-## GMR Path
+`apply_sonic_wrist_targets` 按关节名称将六个结果写入 SMPL payload，并保留并行 GMR 参考的原值。24 关节骨架中的人类手腕 / 手部**位置**，与这里六个机器人手腕**角度**表达不同信息，发布版 encoder 同时需要两者。
 
-GMR path 消费的是处理后的 body-pose dict：
-
-```text
-raw XRobot body_poses
-    -> name mapping and xyzw-to-wxyz quaternion reorder
-    -> coordinate_transform_unity_data
-    -> live pelvis yaw/xy alignment
-    -> min-height z offset
-    -> GMR scale_human_data / offset_human_data
-    -> robot IK
-    -> robot qpos / joint_pos
-```
-
-GMR 直接把 tracker 给的 global positions 和 orientations 当作 IK target frames。
-`scaled_human_data` 只是经过 scale/offset 后的 body-pose dict，用来设 IK target；
-它不是 SONIC canonical SMPL joint set，也不使用 `human_joints_info.pkl`。
-
-当前 runtime 仍然需要这条 path，因为 SONIC SMPL encoder contract 里包含
-`joint_pos_multi_future_wrist_for_smpl`，也就是 robot wrist joint reference。
-
-## SONIC SMPL Reference Path
-
-SMPL reference path 应该和 GMR 保持分离：
-
-```text
-raw XRobot global body quaternions
-    -> convert to local parent-relative SMPL rotations
-    -> `smpl_body_pose_aa`
-    -> use `human_joints_info.pkl` rest skeleton and parents
-    -> FK over the SONIC canonical human skeleton
-    -> select 24 output joints: [0..21, 39, 54]
-    -> rotate positions into the SMPL root frame
-    -> `smpl_joint_pos_root`
-```
-
-这里做的是 forward kinematics，不是 IK。它刻意不把 tracker 的 raw body positions
-直接当成 `smpl_joint_pos_root`，因为 SONIC 训练时用的是 canonical SMPL preprocessing，
-不是 live tracker body positions。
-
-## 为什么 Wrist Joints 要单独给
-
-SMPL joint positions 里已经包含人体的 `Left_Wrist`、`Right_Wrist`、
-`Left_Hand`、`Right_Hand`。
-
-额外的 wrist input 是另一类信息：它是 G1 robot wrist joint angles，不是 SMPL wrist body positions。
-手的位置 reference 能告诉 policy 人手在哪里，但不能唯一决定机器人 wrist roll、pitch、yaw。
-retarget 后的 robot wrist angles 给 policy 补了这个 robot-configuration reference。
-
-所以在当前 ONNX input contract 下：
-
-- SMPL reference fields 来自 raw XRobot rotations + SONIC SMPL FK。
-- Robot wrist references 仍然来自 GMR retargeted `joint_pos`。
-- 如果完全跳过 GMR，就需要用其他 solver 替代这 6 个 wrist joint references，或者重新改/export SONIC encoder input contract。
-
-## Relevant Files
+## 相关文件
 
 - `sim2real/teleop/smpl_stream.py`
 - `sim2real/teleop/pico_retarget_pub.py`
 - `sim2real/rl_policy/utils/motion_buffer.py`
 - `sim2real/rl_policy/observations/sonic.py`
-- `checkpoints/sonic_groot_6k/model_config.yaml`
+- `scripts/export_sonic_release.py`
+- `checkpoints/sonic/release/smpl/policy.yaml`

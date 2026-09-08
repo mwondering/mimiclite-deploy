@@ -5,144 +5,88 @@ slug: /reference/sonic-smpl-input
 
 # SONIC SMPL Input
 
-This note records the runtime contract for SONIC SMPL mode. The short version:
+The default SONIC release from `GR00T-WholeBodyControl` uses SMPL mode for PICO full-body teleoperation. The included adapter is `checkpoints/sonic/release/smpl/policy.yaml`; its complete ONNX contains the encoder, finite scalar quantizer, and action decoder.
 
 ```text
-raw XRobot body poses
-    -> SMPL local body rotations
-    -> SONIC human_joints_info FK
-    -> canonical root-local SMPL joints
-
-GMR retarget
-    -> robot joint_pos
-    -> wrist joint references used by the same SONIC encoder input
+raw XRobot global body rotations
+    -> parent-relative SMPL local rotations
+    -> official human_joints_info FK -> SMPL joint references
+    -> elbow swing + wrist rotation mapping -> G1 wrist references
+    -> SMPL ZMQ stream -> SONIC encoder and decoder
 ```
 
-SMPL reference data and GMR retarget data share the same live tracking source,
-but they are not the same representation.
+The publisher also generates a GMR robot reference for its viewer and the optional SONIC G1 mode. The SMPL policy's wrist targets come directly from the source SONIC mapping, rather than from GMR IK.
 
-## Encoder Components
+## Model inputs
 
-The SONIC checkpoint config lists the SMPL encoder inputs as:
+The single-file ONNX accepts two flat float32 inputs and exposes `action[29]` and `token[64]`:
 
-| Component | Shape | Runtime source | Meaning |
-|---|---:|---|---|
-| `smpl_joints_multi_future_local_nonflat` | `[10, 72]` | `motion_data.smpl_joint_pos_root` | 24 canonical SMPL joint positions, root-local, flattened as xyz. |
-| `smpl_root_ori_b_multi_future` | `[10, 6]` | `motion_data.smpl_root_quat_w` + current robot root quat | Relative root orientation encoded as the first two rotation-matrix columns. |
-| `joint_pos_multi_future_wrist_for_smpl` | `[10, 6]` | wrist slice from `motion_data.joint_pos` | G1 robot wrist joint angles: roll, pitch, yaw for both wrists. |
+| Input | Size | Layout |
+| --- | ---: | --- |
+| `smpl_input` | 840 | All 10 frames of joints (720), then all orientations (60), then all wrist references (60). |
+| `proprioception` | 930 | 10-frame histories of base angular velocity (30), joint position minus default (290), joint velocity (290), previous action (290), and projected gravity (30). |
 
-Current runtime code packs these fields in
-`sim2real/rl_policy/observations/sonic.py::sonic_smpl_official_encoder_input`.
+The encoder reference consists of these groups, concatenated in this order:
 
-## Runtime Payload Fields
+| Observation class in `sonic.py` | Shape before flattening | Source |
+| --- | ---: | --- |
+| `sonic_smpl_joints_multi_future_local` | `[10, 72]` | `motion_data.smpl_joint_pos_root`, 24 canonical joint xyz positions. |
+| `sonic_smpl_root_ori_b_multi_future` | `[10, 6]` | SMPL root relative to the current robot root after initial heading alignment. |
+| `sonic_joint_pos_multi_future_wrist_for_smpl` | `[10, 6]` | Six named wrist fields in `motion_data.joint_pos`, replaced by the source SONIC wrist mapping. |
 
-The SMPL ZMQ publisher sends these reference fields:
+Reference frames are `[0, 1, ..., 9]` at 20 ms spacing. Rotation features flatten the first two rotation-matrix columns **row by row**: `[R00, R01, R10, R11, R20, R21]`. This differs from stacking complete columns. History initialization and joint ordering follow the source C++ deployer; the YAML selects `history_initialization: source_cpp` and `joint_order: policy` where required.
+
+The export wrapper inserts these groups into the original universal encoder's 1762 fields, fixes mode to `2`, and zero-fills inactive fields. Runtime observations therefore do not need to construct the unused encoder modes. See the [artifact notes](https://github.com/mwondering/mimiclite-deploy/blob/main/checkpoints/sonic/release/README.md) for source hashes and validation.
+
+## Stream and startup
+
+Start `pico_retarget_pub.py` with `--publish-smpl`. The default skeleton is included at `checkpoints/sonic/release/smpl/human_joints_info.pkl`; use `--smpl-human-joints-info-path` only to select a different compatible skeleton. The tracking flags are `--motion-backend smpl_zmq --motion-zmq-connect tcp://127.0.0.1:28702`. Full launch commands are in [Pico Teleoperation](/tutorials/pico-teleoperation).
 
 | Payload field | Shape | Meaning |
-|---|---:|---|
-| `smpl_body_pose_aa` | `[N, 21, 3]` | SMPL body local axis-angle rotations, excluding root. Published for traceability and buffer completeness. |
-| `smpl_joint_pos_root` | `[N, 24, 3]` | Canonical SMPL joint positions in the SMPL root frame. This is the field consumed by the encoder. |
-| `smpl_root_quat_w` | `[N, 4]` | SMPL reference root quaternion in `wxyz` order after SONIC root-frame conversion. |
-| `joint_pos` | `[N, num_robot_joints]` | Retargeted G1 robot joint positions. The encoder only uses the six wrist joints. |
+| --- | ---: | --- |
+| `smpl_body_pose_aa` | `[N, 21, 3]` | Parent-relative local axis-angle body rotations, excluding the root. |
+| `smpl_joint_pos_root` | `[N, 24, 3]` | Canonical joints rotated into the source SMPL root convention. |
+| `smpl_root_quat_w` | `[N, 4]` | SMPL reference root quaternion in `wxyz` order after the source root-frame conversion. |
+| `joint_pos` | `[N, 29]` | G1 joint fields; the six wrist values use the source SONIC mapping. Other joints are not consumed by the SMPL encoder. |
 
-The six wrist names are:
+Before the first live frame, the publisher constructs a neutral upright, arms-down pose using the same official FK. It does not send zero joint positions as a substitute skeleton. After live tracking, `X` pause holds the last SMPL body pose, wrist reference, and heading; simulation continues. The parallel GMR stream / viewer returns to the default robot stand pose.
 
-- `left_wrist_roll_joint`
-- `right_wrist_roll_joint`
-- `left_wrist_pitch_joint`
-- `right_wrist_pitch_joint`
-- `left_wrist_yaw_joint`
-- `right_wrist_yaw_joint`
+## Canonical skeleton computation
 
-These are robot joint names, not SMPL skeleton joint names.
-
-## Raw XRobot Data
-
-XRobot body tracking provides one pose per body in this layout:
+XRobot provides body poses as `[x, y, z, qx, qy, qz, qw]`. The body quaternions are global orientations, not local parent-relative rotations. The SMPL path converts them to local rotations before FK:
 
 ```text
-[x, y, z, qx, qy, qz, qw]
+raw global quaternions
+    -> parent-relative local SMPL rotations
+    -> smpl_body_pose_aa
+    -> human_joints_info.pkl rest joints and parent tree
+    -> canonical FK
+    -> select joints [0..21, 39, 54]
+    -> source root-axis conversion and inverse root rotation
+    -> smpl_joint_pos_root
 ```
 
-Those rotations are treated as global body orientations in the tracking/world
-frame, not as local rotations relative to each parent.
+This preserves the source FK's root rest-position offset. Do not additionally subtract joint 0 or force the pelvis to zero: that changes the model's training input. Raw tracker body positions and GMR's `scaled_human_data` are IK target positions, not this canonical skeleton.
 
-`coordinate_transform_unity_data` is not forward kinematics. It applies the
-same Unity-to-right-hand coordinate transform independently to each body pose:
+## Wrist mapping
+
+The wrist reference order is:
 
 ```text
-position -> position @ rotation_matrix.T
-orientation -> coordinate_rotation * orientation
+left_wrist_roll, right_wrist_roll,
+left_wrist_pitch, right_wrist_pitch,
+left_wrist_yaw, right_wrist_yaw
 ```
 
-It does not traverse the SMPL parent tree and does not generate a canonical
-SMPL skeleton.
+`sonic_wrist_targets_from_smpl_pose` follows the source pose-mode mapping: decompose each elbow into Y-axis twist and swing, extract intrinsic `XYZ` Euler angles, and combine elbow swing with the local wrist rotation. Left/right signs follow the source implementation. Identity elbows receive a finite zero-angle treatment.
 
-## GMR Path
+`apply_sonic_wrist_targets` writes the six results into the SMPL payload by joint name. It leaves the parallel GMR reference unchanged. Human wrist/hand **positions** in the 24-joint skeleton and these six robot wrist **angles** carry different information; both are required by the released encoder.
 
-The GMR path consumes the processed body-pose dictionary:
-
-```text
-raw XRobot body_poses
-    -> name mapping and xyzw-to-wxyz quaternion reorder
-    -> coordinate_transform_unity_data
-    -> live pelvis yaw/xy alignment
-    -> min-height z offset
-    -> GMR scale_human_data / offset_human_data
-    -> robot IK
-    -> robot qpos / joint_pos
-```
-
-GMR trusts the tracker-provided global positions and orientations as IK target
-frames. `scaled_human_data` is only a scaled and offset body-pose dictionary for
-IK. It is not the SONIC canonical SMPL joint set, and it does not use
-`human_joints_info.pkl`.
-
-The runtime still needs this path because the SONIC SMPL encoder contract
-includes `joint_pos_multi_future_wrist_for_smpl`, which is a robot wrist-joint
-reference.
-
-## SONIC SMPL Reference Path
-
-The SMPL reference path should stay separate from GMR:
-
-```text
-raw XRobot global body quaternions
-    -> convert to local parent-relative SMPL rotations
-    -> `smpl_body_pose_aa`
-    -> use `human_joints_info.pkl` rest skeleton and parents
-    -> FK over the SONIC canonical human skeleton
-    -> select 24 output joints: [0..21, 39, 54]
-    -> rotate positions into the SMPL root frame
-    -> `smpl_joint_pos_root`
-```
-
-This is forward kinematics, not IK. It deliberately does not use the raw
-tracker body positions as `smpl_joint_pos_root`, because SONIC was trained on
-canonical SMPL preprocessing rather than live tracker body positions.
-
-## Why Wrist Joints Are Separate
-
-The SMPL joint positions already include human wrist and hand points:
-`Left_Wrist`, `Right_Wrist`, `Left_Hand`, and `Right_Hand`.
-
-The extra wrist input is different. It contains G1 robot wrist joint angles, not
-SMPL wrist body positions. Position references tell the policy where the human
-hands are, but they do not uniquely determine the robot wrist roll, pitch, and
-yaw. The retargeted robot wrist angles provide that missing robot-configuration
-reference.
-
-Therefore, under the current ONNX input contract:
-
-- SMPL reference fields come from raw XRobot rotations plus SONIC SMPL FK.
-- Robot wrist references still come from GMR retargeted `joint_pos`.
-- Skipping GMR entirely would require replacing the six wrist joint references
-  with another solver or changing/re-exporting the SONIC encoder input contract.
-
-## Relevant Files
+## Relevant files
 
 - `sim2real/teleop/smpl_stream.py`
 - `sim2real/teleop/pico_retarget_pub.py`
 - `sim2real/rl_policy/utils/motion_buffer.py`
 - `sim2real/rl_policy/observations/sonic.py`
-- `checkpoints/sonic_groot_6k/model_config.yaml`
+- `scripts/export_sonic_release.py`
+- `checkpoints/sonic/release/smpl/policy.yaml`

@@ -15,6 +15,11 @@ HEADER_SIZE = 1280
 SMPL_NUM_JOINTS = 24
 SMPL_NUM_POSE_JOINTS = 21
 SMPL_WAIST_JOINT_NAMES = ("Spine1", "Spine2", "Spine3")
+SONIC_WRIST_JOINT_NAMES = (
+    "left_wrist_roll_joint", "right_wrist_roll_joint",
+    "left_wrist_pitch_joint", "right_wrist_pitch_joint",
+    "left_wrist_yaw_joint", "right_wrist_yaw_joint",
+)
 DEFAULT_HUMAN_JOINTS_INFO_PATH = (
     "checkpoints/sonic/release/smpl/human_joints_info.pkl"
 )
@@ -244,6 +249,82 @@ def official_smpl_frame_from_body_pose_aa(
     root_quat = np.broadcast_to(smpl_root_quat_w.reshape(1, 4), joints.shape[:-1] + (4,))
     smpl_joint_pos_root = quat_rotate_inverse_numpy(root_quat, joints)
     return smpl_joint_pos_root.astype(np.float32, copy=False), smpl_root_quat_w.astype(np.float32)
+
+
+def build_neutral_smpl_frame(
+    human_joints_info_path: str | Path = DEFAULT_HUMAN_JOINTS_INFO_PATH,
+) -> dict[str, np.ndarray]:
+    """Build an upright, arms-down startup reference using SONIC's human FK.
+
+    This is a constructed neutral pose, not a captured PICO frame. In particular,
+    retain the source FK's root offset instead of inventing a pelvis-centered
+    skeleton. Live frames replace this reference after the first resume.
+    """
+    body_pose = np.zeros((SMPL_NUM_POSE_JOINTS, 3), dtype=np.float32)
+    body_pose[15, 2] = -np.pi / 2.0  # Left shoulder: lower the SMPL T-pose arm.
+    body_pose[16, 2] = np.pi / 2.0
+    root_quat_y_up = axis_angle_to_quat_wxyz(
+        np.asarray([[0.0, np.pi / 2.0, 0.0]], dtype=np.float32)
+    )[0]
+    joints, root_quat = official_smpl_frame_from_body_pose_aa(
+        body_pose, root_quat_y_up, human_joints_info_path=human_joints_info_path
+    )
+    return {
+        "smpl_body_pose_aa": body_pose,
+        "smpl_joint_pos_root": joints,
+        "smpl_root_quat_w": root_quat,
+    }
+
+
+def sonic_wrist_targets_from_smpl_pose(smpl_body_pose_aa: np.ndarray) -> np.ndarray:
+    """Match SONIC PICO pose mode's elbow-swing and wrist mapping.
+
+    Returns roll L/R, pitch L/R, yaw L/R. SONIC decomposes the elbow as
+    ``twist_about_y * swing``; its left wrist pitch has the opposite sign to
+    the right. Identity elbows need an explicit finite treatment because the
+    original source axis-angle division is undefined at zero angle.
+    """
+    body_pose = np.asarray(smpl_body_pose_aa, dtype=np.float32).reshape(21, 3)
+    elbows = R.from_rotvec(body_pose[[17, 18]])
+    elbow_quat = elbows.as_quat()  # xyzw
+    twist_quat = np.zeros_like(elbow_quat)
+    twist_quat[:, [1, 3]] = elbow_quat[:, [1, 3]]
+    twist_norm = np.linalg.norm(twist_quat, axis=-1, keepdims=True)
+    singular = twist_norm[:, 0] < 1e-8
+    twist_quat[singular] = [0.0, 0.0, 0.0, 1.0]
+    twist_quat /= np.maximum(np.linalg.norm(twist_quat, axis=-1, keepdims=True), 1e-8)
+    swing = R.from_quat(twist_quat).inv() * elbows
+    swing_euler = swing.as_euler("XYZ", degrees=False)
+    wrist_euler = R.from_rotvec(body_pose[[19, 20]]).as_euler("XYZ", degrees=False)
+    return np.asarray(
+        [
+            swing_euler[0, 0] + wrist_euler[0, 0],
+            -(swing_euler[1, 0] + wrist_euler[1, 0]),
+            wrist_euler[0, 1],
+            -wrist_euler[1, 1],
+            swing_euler[0, 2] + wrist_euler[0, 2],
+            swing_euler[1, 2] + wrist_euler[1, 2],
+        ],
+        dtype=np.float32,
+    )
+
+
+def apply_sonic_wrist_targets(
+    robot_joint_pos: np.ndarray,
+    joint_names: Sequence[str],
+    smpl_body_pose_aa: np.ndarray,
+) -> np.ndarray:
+    """Replace only the SMPL stream wrist references, preserving joint order."""
+    out = np.asarray(robot_joint_pos, dtype=np.float32).reshape(-1).copy()
+    names = list(joint_names)
+    if out.shape != (len(names),):
+        raise ValueError(f"Expected {len(names)} robot joints, got {out.shape}")
+    missing = [name for name in SONIC_WRIST_JOINT_NAMES if name not in names]
+    if missing:
+        raise ValueError(f"SONIC SMPL wrist mapping requires joints: {missing}")
+    indices = [names.index(name) for name in SONIC_WRIST_JOINT_NAMES]
+    out[indices] = sonic_wrist_targets_from_smpl_pose(smpl_body_pose_aa)
+    return out
 
 
 def apply_local_yaw_offset(

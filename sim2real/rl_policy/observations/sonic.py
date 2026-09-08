@@ -5,15 +5,40 @@ from typing import Any, Dict, Sequence
 import numpy as np
 
 from sim2real.rl_policy.observations.base import Observation
-from sim2real.rl_policy.observations.common import _get_simulation_joint_selection
+from sim2real.rl_policy.observations.common import (
+    _get_simulation_joint_selection,
+    sort_names_by_preferred_order,
+)
 from sim2real.rl_policy.observations.motion import TrackingObservation, motion_obs
 from sim2real.utils.math import (
     matrix_from_quat,
     projected_yaw_quat,
     quat_conjugate,
+    quat_from_yaw,
     quat_mul,
     quat_rotate_inverse_numpy,
 )
+
+
+def _sonic_heading_quat(quat: np.ndarray, method: str) -> np.ndarray:
+    if method == "projected":
+        return projected_yaw_quat(quat)
+    if method == "source_cpp":
+        # GR00T math_utils.hpp::calc_heading_d always projects the body x-axis,
+        # including near-vertical poses; HDMI's z-axis fallback is different.
+        rotation = matrix_from_quat(quat)
+        return quat_from_yaw(np.arctan2(rotation[..., 1, 0], rotation[..., 0, 0]))
+    raise ValueError(f"Unknown SONIC heading_method: {method!r}")
+
+
+def _sonic_joint_selection(env, joint_names, joint_order: str) -> list[int]:
+    joint_ids, names = _get_simulation_joint_selection(env, joint_names)
+    if joint_order == "simulation":
+        return joint_ids
+    if joint_order == "policy":
+        names = sort_names_by_preferred_order(names, env.policy_joint_names)
+        return [env.state_processor.joint_names.index(name) for name in names]
+    raise ValueError(f"Unknown SONIC joint_order: {joint_order!r}")
 
 
 class sonic_encoder_select(Observation, namespace="sonic"):
@@ -188,8 +213,10 @@ class sonic_smpl_root_ori_b_multi_future(
 ):
     """Future SMPL root orientations relative to the robot root."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, heading_method: str = "projected", **kwargs):
         super().__init__(**kwargs)
+        self.heading_method = heading_method
+        _sonic_heading_quat(np.asarray([[1., 0., 0., 0.]]), heading_method)
         self._heading_offset: np.ndarray | None = None
 
     def reset(self) -> None:
@@ -208,8 +235,8 @@ class sonic_smpl_root_ori_b_multi_future(
             self.state_processor.root_quat_w, dtype=np.float32
         ).reshape(1, 4)
         self._heading_offset = quat_mul(
-            projected_yaw_quat(robot_root_quat_w),
-            quat_conjugate(projected_yaw_quat(ref_root_quat_w[:1])),
+            _sonic_heading_quat(robot_root_quat_w, self.heading_method),
+            quat_conjugate(_sonic_heading_quat(ref_root_quat_w[:1], self.heading_method)),
         )[0].astype(np.float32, copy=False)
 
     def compute(self) -> np.ndarray:
@@ -312,13 +339,18 @@ class sonic_command_multi_future_nonflat(_SonicMotionObservation, namespace="son
 
 
 class sonic_motion_anchor_ori_b_mf_nonflat(_SonicMotionObservation, namespace="sonic"):
+    def __init__(self, heading_method: str = "projected", **kwargs):
+        super().__init__(**kwargs)
+        self.heading_method = heading_method
+        _sonic_heading_quat(np.asarray([[1., 0., 0., 0.]]), heading_method)
+
     def reset(self) -> None:
         super().reset()
         ref_root_quat_w = self.ref_root_quat_w[0]
         robot_root_quat_w = self.state_processor.root_quat_w
         self._heading_offset = quat_mul(
-            projected_yaw_quat(robot_root_quat_w[None, :]),
-            quat_conjugate(projected_yaw_quat(ref_root_quat_w[None, :])),
+            _sonic_heading_quat(robot_root_quat_w[None, :], self.heading_method),
+            quat_conjugate(_sonic_heading_quat(ref_root_quat_w[None, :], self.heading_method)),
         )[0]
 
     def update(self, data: Dict[str, Any]) -> None:
@@ -366,9 +398,19 @@ class sonic_motion_anchor_ori_heading_mf_nonflat(
 
 
 class _SonicHistoryObservation(Observation):
-    def __init__(self, history_steps: Sequence[int], **kwargs):
+    def __init__(
+        self,
+        history_steps: Sequence[int],
+        history_initialization: str = "repeat_first",
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.history_steps = [int(step) for step in history_steps]
+        if not self.history_steps or min(self.history_steps) < 0:
+            raise ValueError("history_steps must be non-empty and non-negative")
+        if history_initialization not in {"repeat_first", "source_cpp"}:
+            raise ValueError(f"Unknown SONIC history_initialization: {history_initialization!r}")
+        self.history_initialization = history_initialization
         self.max_lag = max(self.history_steps)
         self._history_indices = [
             self.max_lag - lag for lag in sorted(self.history_steps, reverse=True)
@@ -379,9 +421,16 @@ class _SonicHistoryObservation(Observation):
         self.history[:] = 0.0
         self._history_initialized = False
 
+    def _source_padding(self) -> float | np.ndarray:
+        return 0.0
+
     def _append_history(self, value: np.ndarray) -> None:
         if not self._history_initialized:
-            self.history[:] = value
+            self.history[:] = (
+                value if self.history_initialization == "repeat_first"
+                else self._source_padding()
+            )
+            self.history[-1, :] = value
             self._history_initialized = True
             return
         self.history = np.roll(self.history, -1, axis=0)
@@ -409,6 +458,11 @@ class sonic_projected_gravity_history(_SonicHistoryObservation, namespace="sonic
         self.history = np.zeros((self.max_lag + 1, 3), dtype=np.float32)
         self.down = np.array([0.0, 0.0, -1.0], dtype=np.float32)
 
+    def _source_padding(self) -> np.ndarray:
+        # Source StateLogger::makeZeroEntry_ pads with a zero quaternion.
+        # Its quat_rotate_d(zero_quaternion, down) returns -down, not zero.
+        return -self.down
+
     def update(self, data: Dict[str, Any]) -> None:
         gravity = quat_rotate_inverse_numpy(
             self.state_processor.root_quat_w[None, :], self.down[None, :]
@@ -424,10 +478,11 @@ class sonic_joint_pos_rel_history(_SonicHistoryObservation, namespace="sonic"):
         self,
         history_steps: Sequence[int],
         joint_names: Sequence[str] | str = ".*",
+        joint_order: str = "simulation",
         **kwargs,
     ):
         super().__init__(history_steps=history_steps, **kwargs)
-        self.joint_ids, _ = _get_simulation_joint_selection(self.env, joint_names)
+        self.joint_ids = _sonic_joint_selection(self.env, joint_names, joint_order)
         self.default = self.env.default_dof_angles[self.joint_ids]
         self.history = np.zeros(
             (self.max_lag + 1, len(self.joint_ids)),
@@ -446,10 +501,11 @@ class sonic_joint_vel_history(_SonicHistoryObservation, namespace="sonic"):
         self,
         history_steps: Sequence[int],
         joint_names: Sequence[str] | str = ".*",
+        joint_order: str = "simulation",
         **kwargs,
     ):
         super().__init__(history_steps=history_steps, **kwargs)
-        self.joint_ids, _ = _get_simulation_joint_selection(self.env, joint_names)
+        self.joint_ids = _sonic_joint_selection(self.env, joint_names, joint_order)
         self.history = np.zeros(
             (self.max_lag + 1, len(self.joint_ids)),
             dtype=np.float32,
@@ -469,9 +525,18 @@ class sonic_prev_actions_history(_SonicHistoryObservation, namespace="sonic"):
             (self.max_lag + 1, self.env.num_actions),
             dtype=np.float32,
         )
+        self._discard_stale_action = self.history_initialization == "source_cpp"
+
+    def reset(self) -> None:
+        super().reset()
+        self._discard_stale_action = self.history_initialization == "source_cpp"
 
     def update(self, data: Dict[str, Any]) -> None:
-        self._append_history(data["action"])
+        if self._discard_stale_action:
+            self._append_history(np.zeros(self.env.num_actions, dtype=np.float32))
+            self._discard_stale_action = False
+        else:
+            self._append_history(data["action"])
 
     def compute(self) -> np.ndarray:
         return self._history_flat()

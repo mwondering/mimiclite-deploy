@@ -57,3 +57,29 @@ uv run --no-sync python sim2real/rl_policy/tracking.py \
 `outputs/sp_tracking_105000/upload_smoke_root.npz`（不提交）。
 现有导出元数据记录了 20 次源模型与适配模型的零误差比较；本次上传没有重跑源模型比较。
 这只是冒烟测试，不代表全面跟踪质量评估或真机安全验证。本次未执行真机控制。
+
+## PICO 实时观测修复（2026-09-08）
+
+实时参考首次到达时，body 列表可能由配置中的 `pelvis, ...` 变为
+PICO publisher 的 `world, pelvis, ...`。旧版 SP 观测缓存没有检查 body 列表变化，
+会继续读取索引 0，将世界原点误当作骨盆：例如正确参考高度 0.8 m 变为 0 m，
+骨盆朝向也误取为世界坐标系朝向。离线动作布局固定，不会触发这个启动问题；
+MimicLite 的观测会刷新 body 索引，因此也不受影响。
+
+已在 `sim2real/rl_policy/observations/sp_tracking.py` 中修复 body 布局缓存失效条件，
+并增加首次 PICO 帧、body 重排以及缺失骨盆的回归检查。13 项 SP 观测测试通过。
+模型与本目录 YAML 均未更改。更新代码后需要停止并重新启动 tracking 进程；
+已启动的 Python 进程不会自动加载修复。真实 PICO 动作下的稳定性仍需复测。
+
+### 运动过程抖动：实时历史插值修复
+
+另外修复了实时缓冲区过早删除插值左端点的问题：30 Hz publisher 配合
+50 Hz 控制时，SP 50 帧参考窗口的最旧一两帧可能错误保持下一帧值。
+现在保留插值所需的前一帧，31 项 motion-buffer 测试通过。
+平滑 dance 动作的闭环回放中，修复使关节目标二阶差分 RMS 仅下降约 0.54%，
+未复现明显抖动，因此不能将该修复视为实际 PICO 持续抖动的全部解决方案。
+
+实际复测可在现有 tracking 启动命令后加 `--record`。在初始化完成后，
+录制几秒暂停站姿，再按 X 缓慢做会触发抖动的动作，最后 Ctrl+C 保存。
+程序会输出 `policy_tracking_record_policy_YYYYMMDD_HHMMSS.npz`，包含实际参考
+观测、策略动作、关节状态和时序，可用于定位输入跳变及控制周期异常。

@@ -10,6 +10,19 @@ hf://elijahgalahad/any4hdmi-g1-lafan/motions/walk1_subject1.npz
 
 ## Sim2Sim
 
+### 支持的本地 NPZ 格式
+
+`--motion-path` 同时支持现有 any4hdmi 数据集（包括 HF 地址），以及包含
+`fps`、`joint_pos`、`body_pos_w`、`body_quat_w` 的独立 IsaacLab/SP-Tracking
+G1 NPZ 动作，无需改名或手动转换。未提供名称的 IsaacLab 导出默认采用
+G1 的 29 关节 IsaacLab 顺序，并将 body 索引 0 视为 pelvis；如果文件包含
+`joint_names` 和 `body_names`，则优先按名称映射。四元数必须采用 wxyz 顺序。
+
+独立动作会转换到 `.cache/motion/isaaclab/`，原始文件不修改。加载器保留根部
+轨迹和关节角，再用机器人 MJCF（或 `motion.mjcf_path` 覆盖值）重算身体位姿
+和速度，并通过 any4hdmi 重采样到 50 Hz。原文件的非根部身体数组和速度数组
+不会直接复制。单进程 integrated sim2sim 同样支持这一入口。
+
 先启动 MuJoCo 执行进程。启动后终端会打印 mjviser URL：
 
 ```bash

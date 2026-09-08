@@ -13,6 +13,21 @@ hf://elijahgalahad/any4hdmi-g1-lafan/motions/walk1_subject1.npz
 
 ## Sim2Sim
 
+### Supported local NPZ formats
+
+`--motion-path` accepts both existing any4hdmi datasets (including HF references)
+and standalone IsaacLab/SP-Tracking G1 NPZ clips with `fps`, `joint_pos`,
+`body_pos_w`, and `body_quat_w` fields. No renaming or manual conversion is needed.
+For unnamed IsaacLab exports, the loader uses the standard 29-joint G1 IsaacLab
+order and body index 0 as pelvis; embedded `joint_names` and `body_names` take
+precedence. Quaternions must use wxyz order.
+
+Standalone clips are converted into `.cache/motion/isaaclab/` without modifying
+the source. The loader preserves the root trajectory and joint angles, then
+recomputes body poses and velocities using the robot MJCF (or `motion.mjcf_path`
+override) and resamples through any4hdmi to 50 Hz. Original non-root body arrays
+and velocity arrays are not copied. This also works in integrated sim2sim.
+
 Start the MuJoCo execution process. It prints the mjviser URL after startup:
 
 ```bash

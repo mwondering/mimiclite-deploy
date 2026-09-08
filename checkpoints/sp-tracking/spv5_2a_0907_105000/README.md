@@ -60,3 +60,36 @@ The existing export metadata records 20 source-versus-adapted comparisons with
 zero action error; those source comparisons were not rerun for this upload.
 This is a smoke test, not a general tracking-quality or real-G1 safety validation.
 No real-robot execution was performed.
+
+## Live PICO observation fix (2026-09-08)
+
+When the first live reference arrives, body names can change from the configured
+`pelvis, ...` to the PICO publisher's `world, pelvis, ...`. The old SP observation
+cache did not check body-name changes and kept index 0 for pelvis. It therefore
+read the world origin instead of the pelvis: a valid 0.8 m reference height became
+0 m, and the reference orientation became the world orientation. Offline motion
+layouts stay fixed and do not trigger this startup issue. MimicLite refreshes its
+body indices and is unaffected.
+
+The cache invalidation in `sim2real/rl_policy/observations/sp_tracking.py` now
+includes body names. Regression checks cover the first PICO frame, body reordering,
+and missing pelvis; all 13 SP observation tests pass. Neither the model nor this
+directory's YAML changed. Stop and restart tracking after updating the code; a
+running Python process will not reload this fix. Stability with actual live PICO
+motions still needs to be retested.
+
+### Jitter during motion: realtime history interpolation fix
+
+A second fix retains the predecessor needed to interpolate the oldest reference
+sample. Previously, cleanup could delete it for a 30 Hz publisher and 50 Hz
+controller, incorrectly clamping the oldest one or two of SP's 50 reference frames
+to the next publisher frame. All 31 motion-buffer tests pass. On a clean dance
+closed-loop replay, command second-difference RMS improved only about 0.54%, and
+severe jitter was not reproduced. This fix is not evidence that all live PICO
+jitter has been resolved.
+
+For an actual capture, add `--record` to the existing tracking command. After
+initialization, record several seconds of paused standing, press X and slowly
+perform motions that trigger jitter, then Ctrl+C to save. The resulting
+`policy_tracking_record_policy_YYYYMMDD_HHMMSS.npz` includes actual reference
+observations, actions, joint state and timing for discontinuity/overrun analysis.
