@@ -1,0 +1,173 @@
+{
+  "format": "sim2real_semantic_policy",
+  "source_codebase": "SP_Tracking",
+  "policy_variant": "SPV52HeightContactEstimatorActor",
+  "source_format": "motion_tracking_sim2real_resolved_config",
+  "run_name": "2026-09-06_14-22-35_SPTracking-G1-BFM-SPV5-2AActor-HEFTCritic-HEFTReward_4gpu_8192env_motion_data_correct",
+  "iteration": 116000,
+  "checkpoint": "checkpoint_116000.pt",
+  "in_keys": [
+    "robot_root_quat",
+    "estimator_history",
+    "reference_encoder_input",
+    "robot_key_body"
+  ],
+  "out_keys": [
+    "action"
+  ],
+  "in_shapes": [
+    [
+      1,
+      4
+    ],
+    [
+      1,
+      6100
+    ],
+    [
+      1,
+      1900
+    ],
+    [
+      1,
+      195
+    ]
+  ],
+  "out_shapes": [
+    [
+      1,
+      29
+    ]
+  ],
+  "num_actions": 29,
+  "observation_contract": {
+    "flat_order": [
+      "robot_root_quat",
+      "estimator_history",
+      "reference_encoder_input",
+      "robot_key_body"
+    ],
+    "estimator_history": {
+      "length": 50,
+      "layout": "term-major; each term oldest-to-newest",
+      "terms": [
+        [
+          "joint_pos_relative_to_default",
+          29
+        ],
+        [
+          "joint_velocity",
+          29
+        ],
+        [
+          "projected_gravity",
+          3
+        ],
+        [
+          "root_angular_velocity_body",
+          3
+        ],
+        [
+          "previous_raw_action",
+          29
+        ],
+        [
+          "joint_torque",
+          29
+        ]
+      ],
+      "reset": "backfill all slots with the first measured sample"
+    },
+    "reference_encoder_input": {
+      "steps": [
+        -42,
+        -41,
+        -40,
+        -39,
+        -38,
+        -37,
+        -36,
+        -35,
+        -34,
+        -33,
+        -32,
+        -31,
+        -30,
+        -29,
+        -28,
+        -27,
+        -26,
+        -25,
+        -24,
+        -23,
+        -22,
+        -21,
+        -20,
+        -19,
+        -18,
+        -17,
+        -16,
+        -15,
+        -14,
+        -13,
+        -12,
+        -11,
+        -10,
+        -9,
+        -8,
+        -7,
+        -6,
+        -5,
+        -4,
+        -3,
+        -2,
+        -1,
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "fps": 50.0,
+      "frame_layout": [
+        "pelvis_position_world",
+        "pelvis_rotation_6d",
+        "joint_position"
+      ],
+      "rotation_6d": "first two matrix columns, each column contiguous"
+    },
+    "robot_key_body": {
+      "count": 13,
+      "layout": "field-major: position, rotation_6d, linear_velocity, root_relative_angular_velocity",
+      "kinematics_asset": "sim2real/rl_policy/observations/assets/g1_sp_tracking_kinematics.xml"
+    },
+    "deploy_observation_noise": false
+  },
+  "adaptation": {
+    "type": "semantic_input_concat_wrapper",
+    "learned_nodes_or_weights_changed": false,
+    "adapted_onnx_sha256": "bbeecee238ad78d537e9a3abd7f8a8de3c8e72047300d84aed229dbec32b38fd",
+    "source_files": {
+      "policy.onnx": {
+        "size_bytes": 64830682,
+        "sha256": "3b66a8eee922001f55111017dfa18adff201c373127ee81bb247f61b97dc5e04"
+      },
+      "config.yaml": {
+        "size_bytes": 60637,
+        "sha256": "18e9fb327d5ae8691e12686d03425b34d9f55cb0ea0a18e895b42d4b625c4345"
+      },
+      "checkpoint_116000.pt": {
+        "size_bytes": 279003251,
+        "sha256": "f53667dddee553a41f12e64758d02be4b7da8bb25bd3a8d0aeb0b36fb2a4172b"
+      }
+    },
+    "equivalence": {
+      "trials": 20,
+      "max_abs_error": 0.0,
+      "mean_abs_error": 0.0
+    }
+  }
+}
