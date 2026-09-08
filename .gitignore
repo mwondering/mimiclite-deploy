@@ -36,6 +36,8 @@ stubs
 !/tests/test_heft_observations.py
 !/tests/test_sonic_release_observations.py
 !/tests/test_sonic_pico_smpl.py
+!/tests/test_g1_deploy.py
+!/tests/test_deploy_validation.py
 /third_party/*
 !/third_party/dh116s_sdk/
 /third_party/dh116s_sdk/*

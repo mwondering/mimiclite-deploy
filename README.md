@@ -92,6 +92,9 @@ Robot SDKs are kept out of the generic root environment. G1 inline deployment
 uses `uv sync --extra inference-cpu --extra robot-g1`. See
 [Robot I/O Modes](./docs/robot_io.md) for setup and deployment commands.
 
+For the common MimicLite, SP-Tracking, and HEFT hardware entry point, follow
+[G1 PICO deployment](./G1_REAL_DEPLOY.md), including offline preflight and policy switching.
+
 ## Next Steps
 
 - [Docs Home](./docs/README.md)

@@ -339,6 +339,7 @@ class RealtimeMotionBuffer:
 
         self._lock = threading.Lock()
         self._timestamps_ns: list[int] = []
+        self._last_receive_monotonic: float | None = None
         self._joint_pos_frames: list[np.ndarray] = []
         self._joint_vel_frames: list[np.ndarray | None] = []
         self._body_pos_w_frames: list[np.ndarray] = []
@@ -693,6 +694,21 @@ class RealtimeMotionBuffer:
                 body_pos_w_frame=body_pos_w_frame,
                 body_quat_w_frame=body_quat_w_frame,
             )
+            self._last_receive_monotonic = time.monotonic()
+
+    @property
+    def last_receive_monotonic(self) -> float | None:
+        """Local receipt time, independent of the publisher's wall clock."""
+        with self._lock:
+            return self._last_receive_monotonic
+
+    def close(self) -> None:
+        self._motion_stream_stop.set()
+        if self._motion_stream_thread is not None:
+            self._motion_stream_thread.join(timeout=1.0)
+        if self._motion_stream_socket is not None:
+            self._motion_stream_socket.close(0)
+            self._motion_stream_socket = None
 
     @property
     def latest_timestamp_ns(self) -> int | None:

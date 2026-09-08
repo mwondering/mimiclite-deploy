@@ -95,6 +95,9 @@ root XY 位移为 1.5--3.0 m。
 `uv sync --extra inference-cpu --extra robot-g1`。安装与部署命令见
 [Robot I/O 模式](./docs/robot_io.md)。
 
+MimicLite、SP-Tracking、HEFT 的统一真机入口、离线预检和策略切换步骤见
+[G1 PICO 真机部署指南](./G1_REAL_DEPLOY_zh.md)。
+
 Repo skills 统一放在 `.agents/skills/`，无需手动复制到
 `~/.codex/skills/`。可以在 Codex 中显式调用
 `$adapt-policy-to-sim2real`。

@@ -177,6 +177,7 @@ def test_low_cmd_message_rejects_invalid_metadata_footer() -> None:
 class FakeG1Robot:
     def __init__(self) -> None:
         self.read_count = 0
+        self.command_create_count = 0
         self.control_modes: list[object] = []
         self.commands: list[SimpleNamespace] = []
         self.closed = False
@@ -192,11 +193,12 @@ class FakeG1Robot:
     def set_control_mode(self, mode: object) -> None:
         self.control_modes.append(mode)
 
-    def read_low_state(self) -> SimpleNamespace:
+    def read_low_state(self) -> SimpleNamespace | None:
         self.read_count += 1
         return self.low_state
 
     def create_zero_command(self) -> SimpleNamespace:
+        self.command_create_count += 1
         return SimpleNamespace()
 
     def write_low_command(self, command: SimpleNamespace) -> None:
@@ -254,6 +256,17 @@ def _fake_g1_sdk(
     return sdk
 
 
+def _make_fake_g1_backend(robot: FakeG1Robot) -> G1RobotIO:
+    return G1RobotIO(
+        DummyRobotCfg(),  # type: ignore[arg-type]
+        interface="enP8p1s0",
+        sdk_module=_fake_g1_sdk(robot),  # type: ignore[arg-type]
+        motion_switcher_factory=lambda: FakeMotionSwitcherClient([(0, {"name": ""})]),
+        channel_factory_initialize=lambda domain_id, interface: None,
+        motion_release_delay_s=0.0,
+    )
+
+
 def test_g1_robot_io_primes_first_read_and_converts_sdk_state() -> None:
     robot = FakeG1Robot()
     motion_switcher = FakeMotionSwitcherClient()
@@ -291,6 +304,81 @@ def test_g1_robot_io_primes_first_read_and_converts_sdk_state() -> None:
     np.testing.assert_allclose(state.qvel, [0, 0, 0, 1, 2, 3, 0.3, 0.4])
     np.testing.assert_allclose(state.joint_torque, [0.5, 0.6])
     assert state.tick > 0
+
+
+def test_g1_robot_io_accepts_missing_sdk_state_then_recovers() -> None:
+    robot = FakeG1Robot()
+    valid_state = robot.low_state
+    robot.low_state = None
+    backend = _make_fake_g1_backend(robot)
+
+    assert backend.read_state() is None
+
+    robot.low_state = valid_state
+    state = backend.read_state()
+    assert state is not None
+    np.testing.assert_allclose(state.qpos[7:], [0.1, 0.2])
+
+
+def test_g1_robot_io_closes_sdk_when_prime_read_is_interrupted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    robot = FakeG1Robot()
+
+    def interrupt_prime_read():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(robot, "read_low_state", interrupt_prime_read)
+
+    with pytest.raises(KeyboardInterrupt):
+        _make_fake_g1_backend(robot)
+
+    assert robot.closed
+    assert robot.commands == []
+
+
+def test_g1_robot_io_normalizes_small_quaternion_error_without_reordering() -> None:
+    robot = FakeG1Robot()
+    quaternion_wxyz = np.asarray([0.5, -0.5, 0.5, -0.5], dtype=np.float32)
+    robot.low_state.imu.quat = quaternion_wxyz * 1.01
+    original_quaternion = robot.low_state.imu.quat.copy()
+    backend = _make_fake_g1_backend(robot)
+
+    state = backend.read_state()
+
+    np.testing.assert_allclose(state.qpos[3:7], quaternion_wxyz, atol=1e-7)
+    np.testing.assert_array_equal(robot.low_state.imu.quat, original_quaternion)
+
+
+@pytest.mark.parametrize(
+    "component,field,value,error",
+    [
+        ("imu", "quat", [0.0, 0.0, 0.0, 0.0], "norm"),
+        ("imu", "quat", [0.8, 0.0, 0.0, 0.0], "norm"),
+        ("imu", "quat", [1.2, 0.0, 0.0, 0.0], "norm"),
+        ("imu", "quat", [np.nan, 0.0, 0.0, 0.0], "finite"),
+        ("imu", "quat", [np.inf, 0.0, 0.0, 0.0], "finite"),
+        ("imu", "quat", [1.0, 0.0, 0.0], "shape"),
+        ("imu", "omega", [0.0, np.nan, 0.0], "finite"),
+        ("imu", "omega", [0.0, 0.0], "shape"),
+        ("motor", "q", [np.nan, 0.0], "finite"),
+        ("motor", "q", [0.0], "shape"),
+        ("motor", "dq", [0.0, np.inf], "finite"),
+        ("motor", "dq", [[0.0, 0.0]], "shape"),
+        ("motor", "tau_est", [-np.inf, 0.0], "finite"),
+        ("motor", "tau_est", [0.0], "shape"),
+    ],
+)
+def test_g1_robot_io_rejects_invalid_sdk_state(
+    component: str, field: str, value: list, error: str
+) -> None:
+    robot = FakeG1Robot()
+    backend = _make_fake_g1_backend(robot)
+    setattr(getattr(robot.low_state, component), field, value)
+
+    with pytest.raises(ValueError, match=error):
+        backend.read_state()
+    assert robot.commands == []
 
 
 def test_g1_robot_io_runs_debug_helper_before_importing_inline_sdk(
@@ -343,6 +431,69 @@ def test_g1_robot_io_writes_pr_command_arrays() -> None:
 
     backend.close()
     assert robot.closed
+
+
+@pytest.mark.parametrize("field", ["q_target", "dq_target", "tau_ff", "kp", "kd"])
+@pytest.mark.parametrize(
+    "value,error",
+    [
+        (np.asarray([np.nan, 0.0]), "finite"),
+        (np.asarray([0.0, np.inf]), "finite"),
+        (np.asarray([0.0]), "shape"),
+        (np.zeros((1, 2)), "shape"),
+    ],
+)
+def test_g1_robot_io_rejects_invalid_command_before_any_sdk_command_call(
+    field: str, value: np.ndarray, error: str
+) -> None:
+    robot = FakeG1Robot()
+    backend = _make_fake_g1_backend(robot)
+    command = {name: np.zeros(2) for name in ("q_target", "dq_target", "tau_ff", "kp", "kd")}
+    command[field] = value
+
+    with pytest.raises(ValueError, match=error):
+        backend.write_command(**command)
+    assert robot.command_create_count == 0
+    assert robot.commands == []
+
+
+@pytest.mark.parametrize("field", ["kp", "kd"])
+def test_g1_robot_io_rejects_negative_command_gains(field: str) -> None:
+    robot = FakeG1Robot()
+    backend = _make_fake_g1_backend(robot)
+    command = {name: np.zeros(2) for name in ("q_target", "dq_target", "tau_ff", "kp", "kd")}
+    command[field][1] = -0.1
+
+    with pytest.raises(ValueError, match="non-negative"):
+        backend.write_command(**command)
+    assert robot.command_create_count == 0
+    assert robot.commands == []
+
+
+def test_g1_robot_io_passes_valid_29_joint_damping_command() -> None:
+    robot = FakeG1Robot()
+    robot_cfg = DummyRobotCfg()
+    robot_cfg.joint_names = tuple(f"joint_{index}" for index in range(29))
+    backend = G1RobotIO(
+        robot_cfg,  # type: ignore[arg-type]
+        interface="enP8p1s0",
+        sdk_module=_fake_g1_sdk(robot),  # type: ignore[arg-type]
+        motion_switcher_factory=lambda: FakeMotionSwitcherClient([(0, {"name": ""})]),
+        channel_factory_initialize=lambda domain_id, interface: None,
+        motion_release_delay_s=0.0,
+    )
+    q_target = np.linspace(-0.3, 0.3, 29)
+    zeros = np.zeros(29)
+    kd = np.linspace(0.1, 1.0, 29)
+
+    backend.write_command(q_target, zeros, zeros, zeros, kd)
+    q_target[:] = 100.0
+
+    assert robot.command_create_count == 1
+    sent = robot.commands[-1]
+    np.testing.assert_allclose(sent.q_target, np.linspace(-0.3, 0.3, 29), atol=1e-7)
+    np.testing.assert_array_equal(sent.kp, zeros)
+    np.testing.assert_allclose(sent.kd, kd, atol=1e-7)
 
 
 def test_g1_robot_io_aborts_when_debug_mode_cannot_be_confirmed() -> None:

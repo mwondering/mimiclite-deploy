@@ -147,8 +147,9 @@ if command -v ldd >/dev/null 2>&1; then
 fi
 
 export pybind11_DIR
+# Do not sync here: syncing would build this SDK before pybind11_DIR is set.
 pybind11_DIR=$(
-  "$UV_BIN" --project "$ROOT_DIR/venv/pico" run python -c "import pybind11; print(pybind11.get_cmake_dir())"
+  "$UV_BIN" --project "$ROOT_DIR/venv/pico" run --no-sync python -c "import pybind11; print(pybind11.get_cmake_dir())"
 )
 
 echo "[setup_xrobot_pybind] pybind11_DIR=$pybind11_DIR"

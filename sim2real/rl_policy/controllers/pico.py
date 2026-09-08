@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import time
 
 import zmq
 from loguru import logger
@@ -21,6 +22,7 @@ class PicoController(ControllerBase):
         self._pico_msg = PicoButtonState()
         self._last_pico_msg = PicoButtonState()
         self._available = True
+        self.last_receive_monotonic: float | None = None
         self._connect = connect
 
         self._zmq_context = zmq.Context.instance()
@@ -56,6 +58,7 @@ class PicoController(ControllerBase):
                 A=decoded.A,
                 B=decoded.B,
             )
+            self.last_receive_monotonic = time.monotonic()
 
     def get_control_mode(self):
         if not self._available:

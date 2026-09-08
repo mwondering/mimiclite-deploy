@@ -16,7 +16,7 @@ from sim2real.rl_policy.controllers.pico import PicoController
 from sim2real.rl_policy.controllers.unitree_joystick import UnitreeJoystickController
 from sim2real.rl_policy.inference import Timer, build_inference_module
 from sim2real.rl_policy.observations import Observation, ObsGroup, normalize_observation_array
-from sim2real.rl_policy.robot_io import create_robot_io
+from sim2real.rl_policy.robot_io import RobotIO, create_robot_io
 from sim2real.rl_policy.utils.command_sender import ActionManager
 from sim2real.rl_policy.utils.state_processor import StateProcessor
 from sim2real.utils.common import PORTS
@@ -55,6 +55,9 @@ class BasePolicy:
     def __init__(
         self,
         args: "BasePolicyArgs",
+        *,
+        robot_io: RobotIO | None = None,
+        controller: ControllerBase | None = None,
     ):
         self.args = args
         self.robot_cfg = get_robot_cfg(args.robot)
@@ -73,7 +76,7 @@ class BasePolicy:
         self.body_names_simulation = list(policy_config["body_names_simulation"])
 
         self.robot_io_mode = args.robot_io
-        self.robot_io = create_robot_io(
+        self.robot_io = robot_io if robot_io is not None else create_robot_io(
             mode=args.robot_io,
             robot_name=args.robot,
             robot_cfg=self.robot_cfg,
@@ -163,7 +166,10 @@ class BasePolicy:
         self.joint_pos_upper_limit[joint_indices] = joint_pos_upper_limit
 
         self.controller_type = args.controller
-        self.controller = self._build_controller()
+        self.keyboard_controller = None
+        self.joystick_controller = None
+        self.pico_controller = None
+        self.controller = controller if controller is not None else self._build_controller()
         self.use_joystick = self.controller_type == "joystick"
         self.wc_msg = None
 
@@ -212,6 +218,7 @@ class BasePolicy:
             if not np.isfinite(clip_actions) or clip_actions <= 0:
                 raise ValueError("clip_actions must be finite and positive")
         runtime_module = build_inference_module(model_path, self.inference_backend)
+        self.inference_module = runtime_module
         runtime_label = self.inference_backend
         if self.inference_backend == "tensorrt":
             runtime_label = (
@@ -225,6 +232,11 @@ class BasePolicy:
         def policy(input_dict):
             output_dict = runtime_module(input_dict)
             action = np.asarray(output_dict["action"], dtype=np.float32)
+            expected_actions = len(self.controlled_joint_indices)
+            if action.shape != (expected_actions,) or not np.all(np.isfinite(action)):
+                raise ValueError(
+                    f"Expected {expected_actions} finite policy actions, got shape {action.shape}"
+                )
             if clip_actions is not None:
                 action = np.clip(action, -clip_actions, clip_actions)
             next_state_dict = {

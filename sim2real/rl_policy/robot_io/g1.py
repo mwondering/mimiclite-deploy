@@ -14,6 +14,18 @@ from sim2real.config.robots.base import RobotCfg
 from sim2real.rl_policy.robot_io.base import RobotIO, RobotState
 
 
+_QUATERNION_NORM_TOLERANCE = 0.05
+
+
+def _finite_vector(value: object, *, name: str, size: int) -> np.ndarray:
+    vector = np.asarray(value, dtype=np.float32)
+    if vector.shape != (size,):
+        raise ValueError(f"G1 {name} shape {vector.shape} != expected {(size,)}")
+    if not np.all(np.isfinite(vector)):
+        raise ValueError(f"G1 {name} must contain only finite values")
+    return vector.copy()
+
+
 class G1RobotIO(RobotIO):
     """Inline G1 backend backed by the optional ``unitree_interface`` SDK."""
 
@@ -67,7 +79,7 @@ class G1RobotIO(RobotIO):
             self._robot.set_control_mode(sdk_module.ControlMode.PR)
             # Preserve the existing inline startup behavior: prime the SDK once.
             self._robot.read_low_state()
-        except Exception:
+        except BaseException:
             self.close()
             raise
 
@@ -146,19 +158,37 @@ class G1RobotIO(RobotIO):
             if release_delay_s > 0:
                 time.sleep(release_delay_s)
 
-    def read_state(self) -> RobotState:
+    def read_state(self) -> RobotState | None:
         low_state = self._robot.read_low_state()
+        if low_state is None:
+            return None
+
+        # The shared runtime consumes the SDK quaternion in wxyz order. Only
+        # correct small normalization errors; reject invalid orientation data.
+        quaternion = _finite_vector(low_state.imu.quat, name="imu.quat", size=4)
+        quaternion_norm = float(np.linalg.norm(quaternion.astype(np.float64)))
+        if abs(quaternion_norm - 1.0) > _QUATERNION_NORM_TOLERANCE:
+            raise ValueError(
+                "G1 imu.quat must have a norm within 0.05 of 1; "
+                f"received {quaternion_norm}"
+            )
+        quaternion /= quaternion_norm
+
         qpos = np.zeros(7 + self._joint_count, dtype=np.float32)
         qvel = np.zeros(6 + self._joint_count, dtype=np.float32)
-        qpos[3:7] = np.asarray(low_state.imu.quat, dtype=np.float32)
-        qpos[7:] = np.asarray(low_state.motor.q[: self._joint_count], dtype=np.float32)
-        qvel[3:6] = np.asarray(low_state.imu.omega, dtype=np.float32)
-        qvel[6:] = np.asarray(
-            low_state.motor.dq[: self._joint_count], dtype=np.float32
+        qpos[3:7] = quaternion
+        qpos[7:] = _finite_vector(
+            low_state.motor.q[: self._joint_count], name="motor.q", size=self._joint_count
         )
-        joint_torque = np.asarray(
-            low_state.motor.tau_est[: self._joint_count], dtype=np.float32
-        ).copy()
+        qvel[3:6] = _finite_vector(low_state.imu.omega, name="imu.omega", size=3)
+        qvel[6:] = _finite_vector(
+            low_state.motor.dq[: self._joint_count], name="motor.dq", size=self._joint_count
+        )
+        joint_torque = _finite_vector(
+            low_state.motor.tau_est[: self._joint_count],
+            name="motor.tau_est",
+            size=self._joint_count,
+        )
         return RobotState(
             qpos=qpos,
             qvel=qvel,
@@ -174,12 +204,26 @@ class G1RobotIO(RobotIO):
         kp: np.ndarray,
         kd: np.ndarray,
     ) -> None:
+        values = {
+            name: _finite_vector(value, name=name, size=self._joint_count)
+            for name, value in (
+                ("q_target", q_target),
+                ("dq_target", dq_target),
+                ("tau_ff", tau_ff),
+                ("kp", kp),
+                ("kd", kd),
+            )
+        }
+        for name in ("kp", "kd"):
+            if np.any(values[name] < 0):
+                raise ValueError(f"G1 {name} must be non-negative")
+
         command = self._robot.create_zero_command()
-        command.q_target = np.asarray(q_target, dtype=np.float32).copy()
-        command.dq_target = np.asarray(dq_target, dtype=np.float32).copy()
-        command.tau_ff = np.asarray(tau_ff, dtype=np.float32).copy()
-        command.kp = np.asarray(kp, dtype=np.float32).copy().tolist()
-        command.kd = np.asarray(kd, dtype=np.float32).copy().tolist()
+        command.q_target = values["q_target"]
+        command.dq_target = values["dq_target"]
+        command.tau_ff = values["tau_ff"]
+        command.kp = values["kp"].tolist()
+        command.kd = values["kd"].tolist()
         self._robot.write_low_command(command)
 
     def close(self) -> None:
