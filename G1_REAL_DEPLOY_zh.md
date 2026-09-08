@@ -291,9 +291,9 @@ uv run --no-sync python -m scripts.g1.deploy run \
 HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 uv run --no-sync python -m scripts.g1.deploy remote-check --robot-interface eth0 --timeout 15
 ```
 
-该命令只接收 DDS 遥控器消息，不创建电机接口、不切换模式、不发送电机命令。确认 `[PASS] Select received` 后退出检查，再运行原 `run` 命令。启动时要求收到 `rt/wirelesscontroller` 消息；若超时或 Select 已被按下，会在打开 RobotIO 前终止。
+该命令只接收 DDS 遥控器消息，不创建电机接口、不切换模式、不发送电机命令。收到按键会显示 `[PASS] Select received`；超时未按显示 `[UNVERIFIED]`，结束检查，不阻止部署。监听同时接收 `rt/wirelesscontroller` 和 G1 HG `rt/lowstate.wireless_remote`，任一通道可更新数据，任一通道的 Select 均会锁存停止。部署启动不等待遥控器消息，也不要求按 Select。
 
-按下 Select 后锁存停止：停止后续策略推理，所有电机指令改为 `Kp=0、Kd=2、dq_target=0、tau_ff=0` 的阻尼控制。程序持续运行并发送阻尼，松开 Select、按 PICO A/B 或恢复网络均不能解除，需退出并重启。退出清理也不能将已锁存的阻尼覆盖为位置保持。监听进程退出或遥控器 DDS 流连续 2 秒未更新同样触发锁存。
+按下 Select 后锁存停止：停止后续策略推理，所有电机指令改为 `Kp=0、Kd=2、dq_target=0、tau_ff=0` 的阻尼控制。程序持续运行并发送阻尼，松开 Select、按 PICO A/B 或恢复网络均不能解除，需退出并重启。退出清理也不能将已锁存的阻尼覆盖为位置保持。仅收到 Select 按下事件才触发此停止；遥控器消息静默不触发。监听进程异常只记录警告，此时无法接收新的 Select 事件。机器人状态与 PICO 数据故障仍由原有监测处理。
 
 Select 是按键字的 bit 3，依据[宇树官方遥控器解析示例](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/example/wireless_controller/wireless_controller.py)。监听在独立进程中使用实际 `--robot-interface`，与 inline C++ DDS 隔离；电机写入口串行检查锁存状态，另有约 10 ms 轮询线程在推理期间尝试发送阻尼。这不是保证 10 ms 响应的硬件急停：进程卡死、SDK 写阻塞或电机网络断开时不能保证指令到达，DDS 消息持续更新也不证明遥控器无线链路健康。
 

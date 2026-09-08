@@ -20,30 +20,42 @@ def _receive_keys(keys, pressed, seen, received):
     seen.set()
 
 
+def _receive_lowstate(msg, pressed, seen, received):
+    remote = msg.wireless_remote
+    if len(remote) < 4:
+        return
+    # Unitree remote packet: two header bytes, then little-endian key word.
+    keys = int(remote[2]) | (int(remote[3]) << 8)
+    _receive_keys(keys, pressed, seen, received)
+
+
 def _listen(interface, domain_id, pressed, seen, received, stop, failed):
-    subscriber = None
+    subscribers = []
     try:
         from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
         from unitree_sdk2py.idl.unitree_go.msg.dds_ import WirelessController_
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
         ChannelFactoryInitialize(domain_id, interface)
         subscriber = ChannelSubscriber("rt/wirelesscontroller", WirelessController_)
+        subscribers.append(subscriber)
         subscriber.Init(lambda msg: _receive_keys(msg.keys, pressed, seen, received), 10)
+        lowstate = ChannelSubscriber("rt/lowstate", LowState_)
+        subscribers.append(lowstate)
+        lowstate.Init(lambda msg: _receive_lowstate(msg, pressed, seen, received), 10)
         while not stop.wait(0.05):
             pass
     except BaseException:
         failed.set()
         raise
     finally:
-        if subscriber is not None:
+        for subscriber in subscribers:
             subscriber.Close()
 
 
 class SelectStopMonitor:
     """Read-only DDS listener; no robot mode switching or motor writes."""
-    def __init__(self, interface, domain_id, *, timeout=2.0):
-        self.timeout = float(timeout)
-        if not np.isfinite(self.timeout) or self.timeout <= 0:
-            raise ValueError("Select monitor timeout must be finite and positive")
+    def __init__(self, interface, domain_id):
+        self._listener_warning_logged = False
         context = mp.get_context("spawn")
         self.pressed = context.Event()
         self.seen = context.Event()
@@ -62,25 +74,11 @@ class SelectStopMonitor:
         if self.pressed.is_set():
             return "Unitree remote Select pressed"
         if self.failed.is_set() or not self.process.is_alive():
-            return "Select listener exited"
-        if not self.seen.is_set():
-            return "No wireless controller packets"
-        if time.monotonic() - self.received.value > self.timeout:
-            return "Wireless controller stream timed out"
+            if not self._listener_warning_logged:
+                logger.warning("Select listener unavailable; remote software stop cannot receive new presses")
+                self._listener_warning_logged = True
+        # An idle remote is not a stop request. Only an actual Select latches.
         return None
-
-    def wait_until_ready(self, timeout):
-        deadline = time.monotonic() + timeout
-        while not self.seen.is_set():
-            if self.failed.is_set() or not self.process.is_alive():
-                raise RuntimeError("Select listener failed before opening RobotIO")
-            if time.monotonic() >= deadline:
-                raise TimeoutError("No rt/wirelesscontroller data; RobotIO was not opened")
-            self.seen.wait(0.02)
-        reason = self.reason
-        if reason is not None:
-            raise RuntimeError(reason)
-        logger.info("Unitree Select software stop ready (wireless packets received)")
 
     def close(self):
         self.stop.set()

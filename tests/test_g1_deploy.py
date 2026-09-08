@@ -176,9 +176,8 @@ def test_model_preflight_failure_never_enters_hardware_runner(monkeypatch, tmp_p
     assert deploy.main(["run", "--robot-interface", "fake0", "--policy", "heft"]) == 1
 
 
-@pytest.mark.parametrize("fail_remote", [True, False])
 @pytest.mark.parametrize("fail_wait", [True, False])
-def test_robot_attaches_only_after_full_construction_and_both_streams(monkeypatch, fail_wait, fail_remote):
+def test_robot_attaches_only_after_full_construction_and_both_streams(monkeypatch, fail_wait):
     import sim2real.rl_policy.controllers.pico as pico_module
     import sim2real.rl_policy.real_tracking as real_module
     import sim2real.rl_policy.robot_io as io_module
@@ -210,9 +209,7 @@ def test_robot_attaches_only_after_full_construction_and_both_streams(monkeypatc
         def __init__(self, interface, domain):
             assert interface == "test0"
         def wait_until_ready(self, timeout):
-            events.append("remote_checked")
-            if fail_remote:
-                raise TimeoutError("No remote")
+            pytest.fail("deployment must not wait for remote packets")
         def close(self):
             events.append("monitor_closed")
     monkeypatch.setattr(stop_module, "SelectStopMonitor", Monitor)
@@ -225,7 +222,7 @@ def test_robot_attaches_only_after_full_construction_and_both_streams(monkeypatc
     monkeypatch.setattr(real_module, "RealTracking", Policy)
     monkeypatch.setattr(io_module, "create_robot_io", create)
     args = deploy.build_parser().parse_args(["run", "--robot-interface", "test0"])
-    if fail_wait or fail_remote:
+    if fail_wait:
         with pytest.raises(TimeoutError):
             deploy.run_robot(args, deploy.policy_path(args))
         assert "hardware_opened" not in events
@@ -235,8 +232,6 @@ def test_robot_attaches_only_after_full_construction_and_both_streams(monkeypatc
     assert "closed" in events
     if not fail_wait:
         assert events[-1] == "monitor_closed"
-    if not fail_wait and not fail_remote:
-        assert events.index("remote_checked") < events.index("hardware_opened")
 
 
 def test_nonfinite_raw_actions_are_rejected_before_clipping(monkeypatch):
@@ -430,16 +425,16 @@ def test_select_during_sdk_write_finishes_with_damping():
 
 
 @pytest.mark.parametrize("condition", ["pressed", "stale", "dead", "failed", "unseen"])
-def test_monitor_fails_closed(condition):
+def test_monitor_stops_only_on_select(condition):
     import threading
     from sim2real.rl_policy.robot_io.select_stop import SelectStopMonitor
     monitor = object.__new__(SelectStopMonitor)
-    monitor.timeout = 2.0
+    monitor._listener_warning_logged = False
     monitor.pressed, monitor.seen, monitor.failed = (threading.Event() for _ in range(3))
     monitor.seen.set()
     monitor.received = SimpleNamespace(value=time.monotonic())
     monitor.process = SimpleNamespace(is_alive=lambda: condition != "dead")
-    assert monitor.reason is None if condition != "dead" else monitor.reason is not None
+    assert monitor.reason is None
     if condition == "pressed":
         monitor.pressed.set()
     elif condition == "stale":
@@ -448,13 +443,11 @@ def test_monitor_fails_closed(condition):
         monitor.failed.set()
     elif condition == "unseen":
         monitor.seen.clear()
-    assert monitor.reason is not None
-    with pytest.raises((RuntimeError, TimeoutError)):
-        monitor.wait_until_ready(0.0)
+    assert (monitor.reason is not None) == (condition == "pressed")
 
 
-@pytest.mark.parametrize("failed", [False, True])
-def test_remote_check_never_opens_robot_or_loads_policy(monkeypatch, failed):
+@pytest.mark.parametrize("pressed", [False, True])
+def test_remote_check_never_opens_robot_or_loads_policy(monkeypatch, pressed, capsys):
     from sim2real.rl_policy.robot_io import select_stop
     import sim2real.rl_policy.deploy_validation as validation
     import sim2real.rl_policy.robot_io as io_module
@@ -463,14 +456,25 @@ def test_remote_check_never_opens_robot_or_loads_policy(monkeypatch, failed):
         reason = None
         def __init__(self, interface, domain):
             assert interface == "test0"
-            self.pressed = SimpleNamespace(is_set=lambda: True)
-        def wait_until_ready(self, timeout):
-            if failed:
-                raise TimeoutError("no controller")
+            self.pressed = SimpleNamespace(is_set=lambda: pressed)
         def close(self):
             events.append("closed")
     monkeypatch.setattr(select_stop, "SelectStopMonitor", Monitor)
     monkeypatch.setattr(validation, "check_policy", lambda *_: pytest.fail("model loaded"))
     monkeypatch.setattr(io_module, "create_robot_io", lambda **_: pytest.fail("hardware opened"))
-    assert deploy.main(["remote-check", "--robot-interface", "test0"]) == int(failed)
+    assert deploy.main(["remote-check", "--robot-interface", "test0", "--timeout", "0.02"]) == 0
+    assert ("[PASS]" if pressed else "[UNVERIFIED]") in capsys.readouterr().out
     assert events == ["closed"]
+
+
+def test_lowstate_select_key_decode_and_latch():
+    import threading
+    from sim2real.rl_policy.robot_io.select_stop import _receive_lowstate
+    pressed, seen = threading.Event(), threading.Event()
+    received = SimpleNamespace(value=0.0)
+    for keys, expected in [(0x0100, False), (0x0004, False), (0x0008, True), (0, True)]:
+        packet = [0xFE, 0xEF, keys & 255, keys >> 8] + [0] * 36
+        _receive_lowstate(SimpleNamespace(wireless_remote=packet), pressed, seen, received)
+        assert pressed.is_set() == expected
+        assert seen.is_set()
+        assert received.value > 0
