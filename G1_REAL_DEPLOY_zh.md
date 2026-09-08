@@ -280,6 +280,25 @@ uv run --no-sync python -m scripts.g1.deploy run \
 
 每次切换重新初始化，再进入策略模式。需要记录时，在完整 `run` 命令后追加 `--record --record-output outputs/g1_pico_run.npz`。
 
+
+## 宇树遥控器 Select 软件停止
+
+`python -m scripts.g1.deploy run` 现默认同时监听宇树遥控器的 Select，PICO 继续负责正常操作。三类策略共用此功能；旧 `tracking.py` / bridge 入口不包含此停止通道。同步更新 `scripts/g1/deploy.py`、`sim2real/rl_policy/real_tracking.py` 和新增的 `sim2real/rl_policy/robot_io/select_stop.py` 后，原启动命令不变。
+
+先退出现有策略进程，再在 G1 做只读按键检查，替换实际控制网卡名，看到提示后按 Select：
+
+```bash
+HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 uv run --no-sync python -m scripts.g1.deploy remote-check --robot-interface eth0 --timeout 15
+```
+
+该命令只接收 DDS 遥控器消息，不创建电机接口、不切换模式、不发送电机命令。确认 `[PASS] Select received` 后退出检查，再运行原 `run` 命令。启动时要求收到 `rt/wirelesscontroller` 消息；若超时或 Select 已被按下，会在打开 RobotIO 前终止。
+
+按下 Select 后锁存停止：停止后续策略推理，所有电机指令改为 `Kp=0、Kd=2、dq_target=0、tau_ff=0` 的阻尼控制。程序持续运行并发送阻尼，松开 Select、按 PICO A/B 或恢复网络均不能解除，需退出并重启。退出清理也不能将已锁存的阻尼覆盖为位置保持。监听进程退出或遥控器 DDS 流连续 2 秒未更新同样触发锁存。
+
+Select 是按键字的 bit 3，依据[宇树官方遥控器解析示例](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/example/wireless_controller/wireless_controller.py)。监听在独立进程中使用实际 `--robot-interface`，与 inline C++ DDS 隔离；电机写入口串行检查锁存状态，另有约 10 ms 轮询线程在推理期间尝试发送阻尼。这不是保证 10 ms 响应的硬件急停：进程卡死、SDK 写阻塞或电机网络断开时不能保证指令到达，DDS 消息持续更新也不证明遥控器无线链路健康。
+
+**阻尼不维持站姿，机器人可能下沉或倒下。** 实机首次验证应有支撑和独立硬件应急措施。本次仅完成模拟 I/O 测试，没有验证当前 G1 的真实按键接收、停机时延或机械效果。
+
 ## 6. 接管与实时跟随
 
 保持 publisher 暂停、人体自然站立，依次操作：
@@ -292,12 +311,13 @@ uv run --no-sync python -m scripts.g1.deploy run \
 
 | 按键 / 事件 | 行为 |
 | --- | --- |
+| 宇树遥控器 `Select` | 锁存阻尼停止，不能通过 PICO 恢复；需重启 |
 | `A` | 向所选策略的初始化姿态过渡 |
 | `A+B` | 重置观测历史并进入策略控制 |
 | `B` 单独按 | `zero` 模式，以 PD 控制保持测得的关节位置；不是断力矩急停 |
 | `X` | 切换人体跟随 / 暂停；本指南的 G1 流暂停会回到默认站姿参考，保留当前水平位置与朝向 |
 | 运行故障 | 已有有效关节状态时锁存关节位置 PD 保持；需处理原因并重启，恢复数据不会自动重新接管。尚未取得有效状态时退出 |
-| `Ctrl+C` | 尝试发送最后已知关节位置保持命令后退出；不是硬件急停，也不保证自动恢复 G1 高层控制 |
+| `Ctrl+C` | 未触发 Select 时尝试发送关节保持后退出；已触发时保持阻尼再退出。不保证恢复 G1 高层控制 |
 
 先在暂停参考下确认稳定，再测试缓慢抬手等小幅动作。X 控制参考，A/B 控制机器人模式，两者作用不同。
 

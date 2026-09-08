@@ -47,6 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--stream-timeout", type=_positive, default=1.0)
             cmd.add_argument("--record", action="store_true")
             cmd.add_argument("--record-output")
+    remote = sub.add_parser("remote-check", help="Read Select packets only; no motor commands or mode switch")
+    remote.add_argument("--robot-interface", required=True)
+    remote.add_argument("--timeout", type=_positive, default=15.0)
     return parser
 
 
@@ -101,6 +104,7 @@ def run_robot(args, config: Path) -> None:
     from sim2real.rl_policy.controllers.pico import PicoController
     from sim2real.rl_policy.real_tracking import DeferredRobotIO, RealTracking
     from sim2real.rl_policy.robot_io import create_robot_io
+    from sim2real.rl_policy.robot_io.select_stop import SelectStopMonitor, SelectStopRobotIO
     from sim2real.rl_policy.tracking import TrackingArgs
 
     validate_host(args.robot_interface)
@@ -120,29 +124,71 @@ def run_robot(args, config: Path) -> None:
         deferred = DeferredRobotIO()
         controller = PicoController(connect=tracking_args.pico_zmq_connect)
         policy = None
+        monitor = None
         try:
             policy = RealTracking(
                 tracking_args, robot_io=deferred, controller=controller,
                 stream_timeout=args.stream_timeout, startup_timeout=args.startup_timeout,
             )
             policy.wait_for_streams()
+            monitor = SelectStopMonitor(args.robot_interface, policy.robot_cfg.domain_id)
+            monitor.wait_until_ready(args.startup_timeout)
             # Only this line releases high-level motion mode and opens real DDS.
             deferred.backend = create_robot_io(
                 mode="inline", robot_name="g1", robot_cfg=policy.robot_cfg,
                 interface=args.robot_interface,
             )
+            deferred.backend = SelectStopRobotIO(deferred.backend, monitor, len(policy.robot_cfg.joint_names))
+            deferred.backend.start()
             policy.run()
         finally:
-            if policy is not None:
-                policy.close()
-            else:
-                controller.close()
-                deferred.close()
+            try:
+                if policy is not None:
+                    policy.close()
+                else:
+                    controller.close()
+                    deferred.close()
+            finally:
+                if monitor is not None:
+                    monitor.close()
+
+
+def check_remote(args) -> int:
+    import time
+    from sim2real.config.robots import get_robot_cfg
+    from sim2real.rl_policy.robot_io.select_stop import SelectStopMonitor
+
+    monitor = None
+    try:
+        monitor = SelectStopMonitor(args.robot_interface, get_robot_cfg("g1").domain_id)
+        monitor.wait_until_ready(args.timeout)
+        print("Remote packets received. Press Unitree SELECT now (read-only test).", flush=True)
+        deadline = time.monotonic() + args.timeout
+        while time.monotonic() < deadline:
+            if monitor.pressed.is_set():
+                print("[PASS] Select received; no RobotIO created and no motor commands sent.", flush=True)
+                return 0
+            reason = monitor.reason
+            if reason is not None:
+                raise RuntimeError(reason)
+            time.sleep(0.01)
+        raise TimeoutError("Select was not pressed before timeout")
+    except KeyboardInterrupt:
+        return 130
+    except Exception as exc:
+        print(f"[FAIL] Remote check: {exc}", flush=True)
+        return 1
+    finally:
+        if monitor is not None:
+            monitor.close()
 
 
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.command == "remote-check":
+        configure_offline_environment()
+        return check_remote(args)
     if args.policy_config is not None and args.policy == "all":
         parser.error("--policy-config requires one explicit --policy")
     configure_offline_environment()

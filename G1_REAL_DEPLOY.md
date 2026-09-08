@@ -280,6 +280,25 @@ The 50 Hz policy and 30 Hz retargeting rates are requested rates. Measure whethe
 
 Initialize again after each switch before entering policy mode. To record, append `--record --record-output outputs/g1_pico_run.npz` to the complete `run` command.
 
+
+## Unitree remote Select software stop
+
+`python -m scripts.g1.deploy run` now also listens for Unitree remote Select by default while PICO handles normal operation. This applies to all three policy families; legacy `tracking.py` / bridge entry points do not include this stop channel. Sync `scripts/g1/deploy.py`, `sim2real/rl_policy/real_tracking.py`, and the new `sim2real/rl_policy/robot_io/select_stop.py`. Existing run commands remain valid.
+
+Exit any running policy process first, then check the button on G1 without motor commands. Replace the control interface and press Select after the prompt:
+
+```bash
+HF_HUB_OFFLINE=1 HF_HUB_DISABLE_TELEMETRY=1 uv run --no-sync python -m scripts.g1.deploy remote-check --robot-interface eth0 --timeout 15
+```
+
+This only receives DDS remote messages: no motor interface, mode switching, or motor commands. Confirm `[PASS] Select received`, finish the check, then use the normal `run` command. Startup requires `rt/wirelesscontroller` packets; timeout or Select already pressed aborts before opening RobotIO.
+
+Select latches a stop: subsequent policy inference is skipped and all motor commands become damping with `Kp=0, Kd=2, dq_target=0, tau_ff=0`. The process keeps running and sending damping. Releasing Select, pressing PICO A/B, or reconnecting cannot clear the latch; exit and restart are required. Cleanup cannot overwrite latched damping with position hold. A listener process exit or 2 seconds without remote DDS packets also latches the stop.
+
+Select is bit 3 of the key word, following the [official Unitree remote parser](https://github.com/unitreerobotics/unitree_sdk2_python/blob/master/example/wireless_controller/wireless_controller.py). A separate process listens on the actual `--robot-interface`, isolated from inline C++ DDS. Motor writes serialize the latch check, and a thread polling about every 10 ms attempts damping during inference. This is not a hardware emergency stop or a guaranteed 10 ms response: process stalls, blocked SDK writes, and motor network loss can prevent delivery. Fresh DDS packets do not establish that the remote's radio link is healthy.
+
+**Damping does not maintain standing balance; the robot can sink or fall.** Use support and independent hardware emergency provisions for the first physical test. Only simulated I/O tests were performed here; actual button reception, stop latency, and mechanical behavior on this G1 remain unverified.
+
 ## 6. Take control and enable live following
 
 Keep the publisher paused and the operator standing naturally, then follow this sequence:
@@ -292,12 +311,13 @@ Press A → wait about 10 seconds for initialization
 
 | Button / event | Behavior |
 | --- | --- |
+| Unitree remote `Select` | Latches damping stop; PICO cannot resume it; restart required |
 | `A` | Transition toward the selected policy's initialization pose |
 | `A+B` | Reset observation history and enter policy control |
 | `B` alone | Enter `zero` mode, using PD control to hold measured joint positions; this is not a torque-off emergency stop |
 | `X` | Toggle body following / pause; this guide's G1 stream returns to the default standing reference on pause, retaining horizontal position and heading |
 | Runtime fault | If valid joint state is available, latch a joint-position PD hold; address the cause and restart. Restored data does not automatically resume policy control. Exit if valid state has never been obtained |
-| `Ctrl+C` | Attempt to send a final hold command using the last known joint positions, then exit; this is not a hardware emergency stop and does not guarantee restoration of G1's high-level controller |
+| `Ctrl+C` | Attempt a joint-position hold before exiting if Select has not latched; otherwise preserve damping before exiting. Restoration of G1's high-level controller is not guaranteed |
 
 Confirm stability with the paused reference before trying slow, small movements. X changes the reference; A/B changes the robot's control mode.
 

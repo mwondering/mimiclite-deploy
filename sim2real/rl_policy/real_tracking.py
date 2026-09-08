@@ -33,6 +33,16 @@ class DeferredRobotIO(RobotIO):
             self.backend.close()
             self.backend = None
 
+    @property
+    def emergency_stop_reason(self):
+        return getattr(self.backend, "emergency_stop_reason", None)
+
+    def poll_stop(self):
+        if self.backend is not None:
+            poll = getattr(self.backend, "poll_stop", None)
+            if poll is not None:
+                poll()
+
 
 class RealTracking(Tracking):
     def __init__(self, args, *, robot_io, controller, stream_timeout=1.0, startup_timeout=15.0):
@@ -140,6 +150,10 @@ class RealTracking(Tracking):
             self.action_manager.send_command(self._hold_target, zeros, zeros)
 
     def step(self) -> None:
+        if getattr(self.robot_io, "emergency_stop_reason", None) is not None:
+            # Before state reads, PICO handling, faults and inference.
+            self.robot_io.poll_stop()
+            return
         # A latched fault never resumes inference on a delayed A+B packet.
         if self.fault_reason is not None:
             self._send_hold()
